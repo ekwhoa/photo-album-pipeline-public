@@ -80,13 +80,45 @@ def _get_exif_dict(img) -> Optional[Dict[str, Any]]:
     Extract EXIF data as a human-readable dictionary.
     
     Converts numeric tag IDs to string names and makes values JSON-serializable.
+    Tries multiple methods to maximize EXIF extraction success.
     """
     try:
         from PIL.ExifTags import TAGS, GPSTAGS
         
-        exif_raw = img._getexif()
+        # Try multiple methods to get EXIF data
+        exif_raw = None
+        
+        # Method 1: getexif() - newer Pillow API (returns ExifTags.IFD object)
+        try:
+            exif_obj = img.getexif()
+            if exif_obj:
+                exif_raw = dict(exif_obj)
+                # Also try to get IFD data for DateTimeOriginal etc.
+                try:
+                    from PIL.ExifTags import IFD
+                    ifd_exif = exif_obj.get_ifd(IFD.Exif)
+                    if ifd_exif:
+                        exif_raw.update(ifd_exif)
+                    ifd_gps = exif_obj.get_ifd(IFD.GPSInfo)
+                    if ifd_gps:
+                        exif_raw[34853] = ifd_gps  # GPSInfo tag ID
+                except (ImportError, AttributeError):
+                    pass
+        except AttributeError:
+            pass
+        
+        # Method 2: _getexif() - legacy method (works well with JPEG)
         if not exif_raw:
+            try:
+                exif_raw = img._getexif()
+            except AttributeError:
+                pass
+        
+        if not exif_raw:
+            print("[EXIF] No EXIF data found in image")
             return None
+        
+        print(f"[EXIF] Found {len(exif_raw)} EXIF tags")
         
         exif_dict = {}
         for tag_id, value in exif_raw.items():
@@ -104,7 +136,8 @@ def _get_exif_dict(img) -> Optional[Dict[str, Any]]:
         
         return exif_dict
         
-    except Exception:
+    except Exception as e:
+        print(f"[EXIF] Error extracting EXIF: {e}")
         return None
 
 
@@ -148,15 +181,17 @@ def _make_json_safe(value: Any) -> Any:
 def _parse_datetime(exif_data: Dict[str, Any]) -> Optional[datetime]:
     """Parse capture datetime from EXIF data."""
     # Try various datetime tags in order of preference
-    datetime_tags = ["DateTimeOriginal", "DateTimeDigitized", "DateTime"]
+    datetime_tags = ["DateTimeOriginal", "DateTime", "DateTimeDigitized"]
     
     for tag in datetime_tags:
         value = exif_data.get(tag)
         if value:
             parsed = _parse_exif_datetime(value)
             if parsed:
+                print(f"[EXIF] Found taken_at from {tag}: {parsed}")
                 return parsed
     
+    print("[EXIF] No datetime tags found in EXIF data")
     return None
 
 
