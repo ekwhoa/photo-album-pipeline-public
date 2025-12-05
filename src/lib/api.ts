@@ -45,6 +45,16 @@ export interface GenerateResult {
   warnings: string[];
 }
 
+export interface UploadStats {
+  uploaded: number;
+  skipped_unsupported: number;
+}
+
+export interface UploadResponse {
+  assets: Asset[];
+  stats: UploadStats;
+}
+
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -90,7 +100,7 @@ export const assetsApi = {
     return apiRequest<Asset[]>(`/books/${bookId}/assets${params}`);
   },
   
-  upload: async (bookId: string, files: FileList): Promise<Asset[]> => {
+  upload: async (bookId: string, files: FileList): Promise<UploadResponse> => {
     const formData = new FormData();
     Array.from(files).forEach((file) => {
       formData.append('files', file);

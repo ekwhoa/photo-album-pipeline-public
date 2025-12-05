@@ -87,9 +87,16 @@ export default function BookDetailPage() {
     if (!id) return;
     setIsUploading(true);
     try {
-      const newAssets = await assetsApi.upload(id, files);
+      const result = await assetsApi.upload(id, files);
+      const newAssets = result.assets;
       setAssets((prev) => [...newAssets, ...prev]);
-      toast.success(`Uploaded ${newAssets.length} photo(s)`);
+      if (result.stats.skipped_unsupported > 0) {
+        toast.success(
+          `Uploaded ${result.stats.uploaded} photo(s). Skipped ${result.stats.skipped_unsupported} GIF/video file(s) (not supported yet).`
+        );
+      } else {
+        toast.success(`Uploaded ${result.stats.uploaded} photo(s)`);
+      }
     } catch (error) {
       console.error('Upload failed:', error);
       toast.error('Failed to upload photos');

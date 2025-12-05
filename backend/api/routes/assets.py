@@ -43,6 +43,16 @@ class BulkStatusUpdate(BaseModel):
     status: str
 
 
+class UploadStats(BaseModel):
+    uploaded: int
+    skipped_unsupported: int
+
+
+class UploadResponse(BaseModel):
+    assets: List[AssetResponse]
+    stats: UploadStats
+
+
 def asset_to_response(asset: Asset) -> AssetResponse:
     """Convert domain Asset to API response."""
     return AssetResponse(
@@ -85,7 +95,7 @@ async def list_assets(book_id: str, status: Optional[str] = None):
         return [asset_to_response(a) for a in book_assets]
 
 
-@router.post("/upload", response_model=List[AssetResponse])
+@router.post("/upload", response_model=UploadResponse)
 async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
     """Upload one or more photos to a book."""
     with SessionLocal() as session:
@@ -94,8 +104,16 @@ async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
             raise HTTPException(status_code=404, detail="Book not found")
 
         uploaded = []
+        skipped_unsupported = 0
 
         for file in files:
+            # Unsupported media: videos or GIFs
+            content_type = (file.content_type or "").lower()
+            filename_lower = (file.filename or "").lower()
+            if content_type.startswith("video/") or content_type == "image/gif" or filename_lower.endswith(".gif"):
+                skipped_unsupported += 1
+                continue
+
             # Generate asset ID
             asset_id = Asset.generate_id()
             original_filename = file.filename or "photo.jpg"
@@ -176,7 +194,13 @@ async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
             saved = assets_repo.create_asset(session, asset)
             uploaded.append(saved)
         
-        return [asset_to_response(a) for a in uploaded]
+        return UploadResponse(
+            assets=[asset_to_response(a) for a in uploaded],
+            stats=UploadStats(
+                uploaded=len(uploaded),
+                skipped_unsupported=skipped_unsupported,
+            ),
+        )
 
 
 def _change_extension(filename: str, new_ext: str) -> str:
