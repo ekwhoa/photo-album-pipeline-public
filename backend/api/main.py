@@ -9,6 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from api.routes import books, assets, pipeline
+from services.metadata_extractor import register_heif_opener
+
+# Register HEIF/HEIC opener at startup (for iPhone photos)
+heif_available = register_heif_opener()
 
 # Create app
 app = FastAPI(

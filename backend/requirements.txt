@@ -4,8 +4,9 @@ uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6  # For file uploads
 pydantic>=2.0.0
 
-# Image processing (optional but recommended)
+# Image processing
 Pillow>=10.0.0
+pillow-heif>=0.16.0  # HEIC/HEIF support for iPhone photos
 
 # PDF rendering (choose one or both)
 weasyprint>=60.0  # HTML/CSS to PDF - requires system dependencies
