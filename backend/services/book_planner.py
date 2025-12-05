@@ -4,7 +4,8 @@ Book planner service.
 Takes organized days/events and creates a Book structure with
 front cover, trip summary, interior pages, and back cover.
 """
-from typing import List, Optional
+from typing import List, Optional, Tuple
+from datetime import date
 from domain.models import (
     Asset, Book, BookSize, Day, Page, PageType
 )
@@ -55,13 +56,18 @@ def plan_book(
     # Select hero asset for cover (first asset or None)
     hero_asset_id = all_asset_ids[0] if all_asset_ids else None
     
+    # Compute EXIF-based date range for subtitles
+    _, _, exif_subtitle = compute_exif_date_range(assets)
+    fallback_subtitle = _generate_subtitle(days) or f"{len(days)} days • {len(assets)} photos"
+    cover_subtitle = exif_subtitle or fallback_subtitle
+
     # Create front cover
     front_cover = Page(
         index=0,
         page_type=PageType.FRONT_COVER,
         payload={
             "title": title,
-            "subtitle": _generate_subtitle(days),
+            "subtitle": cover_subtitle,
             "hero_asset_id": hero_asset_id,
         },
     )
@@ -102,13 +108,13 @@ def plan_book(
 
 
 def _generate_subtitle(days: List[Day]) -> str:
-    """Generate a subtitle from the date range."""
+    """Generate a subtitle from Day dates (fallback only)."""
     if not days:
         return ""
     
     dates = [d.date for d in days if d.date]
     if not dates:
-        return f"{len(days)} days"
+        return ""
     
     start = min(dates)
     end = max(dates)
@@ -122,6 +128,38 @@ def _generate_subtitle(days: List[Day]) -> str:
             return f"{start.strftime('%B %d')} - {end.strftime('%B %d, %Y')}"
     else:
         return f"{start.strftime('%B %Y')} - {end.strftime('%B %Y')}"
+
+
+def compute_exif_date_range(assets: List[Asset]) -> Tuple[Optional[date], Optional[date], Optional[str]]:
+    """
+    Compute date range from EXIF taken_at only.
+    
+    Returns:
+        (start_date, end_date, subtitle_text) where subtitle_text is human-readable.
+        Returns (None, None, None) if no EXIF timestamps are present.
+    """
+    exif_dates = [
+        a.metadata.taken_at.date()
+        for a in assets
+        if a.metadata and a.metadata.taken_at is not None
+    ]
+    if not exif_dates:
+        return None, None, None
+    
+    start = min(exif_dates)
+    end = max(exif_dates)
+    
+    if start == end:
+        subtitle = start.strftime("%B %d, %Y")
+    elif start.year == end.year:
+        if start.month == end.month:
+            subtitle = f"{start.strftime('%B %d')} - {end.strftime('%d, %Y')}"
+        else:
+            subtitle = f"{start.strftime('%B %d')} - {end.strftime('%B %d, %Y')}"
+    else:
+        subtitle = f"{start.strftime('%B %Y')} - {end.strftime('%B %Y')}"
+    
+    return start, end, subtitle
 
 
 def _create_trip_summary_page(
@@ -142,32 +180,11 @@ def _create_trip_summary_page(
         if a.metadata and a.metadata.gps_lat is not None and a.metadata.gps_lon is not None
     )
     
-    # Get date range from EXIF taken_at only (not created_at fallback)
-    exif_dates = [
-        a.metadata.taken_at.date() for a in assets
-        if a.metadata and a.metadata.taken_at is not None
-    ]
-    
-    if exif_dates:
-        start_date = min(exif_dates).isoformat()
-        end_date = max(exif_dates).isoformat()
-        # Generate subtitle from EXIF dates
-        start = min(exif_dates)
-        end = max(exif_dates)
-        if start == end:
-            subtitle = start.strftime("%B %d, %Y")
-        elif start.year == end.year:
-            if start.month == end.month:
-                subtitle = f"{start.strftime('%B %d')} - {end.strftime('%d, %Y')}"
-            else:
-                subtitle = f"{start.strftime('%B %d')} - {end.strftime('%B %d, %Y')}"
-        else:
-            subtitle = f"{start.strftime('%B %Y')} - {end.strftime('%B %Y')}"
-    else:
-        # No EXIF timestamps - use simple fallback
-        start_date = None
-        end_date = None
-        subtitle = f"{day_count} days • {photo_count} photos"
+    # Use EXIF-based range first; fallback to simple stats
+    start_date_exif, end_date_exif, subtitle_exif = compute_exif_date_range(assets)
+    subtitle = subtitle_exif or f"{day_count} days • {photo_count} photos"
+    start_date = start_date_exif.isoformat() if start_date_exif else None
+    end_date = end_date_exif.isoformat() if end_date_exif else None
     
     return Page(
         index=index,
