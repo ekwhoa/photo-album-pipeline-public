@@ -44,6 +44,10 @@ export default function BookDetailPage() {
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
   const [selectedPage, setSelectedPage] = useState<PagePreview | null>(null);
   const [isApprovingAll, setIsApprovingAll] = useState(false);
+  const [activeTab, setActiveTab] = useState('upload');
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const loadBook = async () => {
     if (!id) return;
@@ -67,6 +71,17 @@ export default function BookDetailPage() {
   useEffect(() => {
     loadBook();
   }, [id]);
+
+  useEffect(() => {
+    setPreviewHtml(null);
+    setPreviewError(null);
+  }, [id]);
+
+  useEffect(() => {
+    if (activeTab === 'preview') {
+      loadPreviewHtml();
+    }
+  }, [activeTab, id]);
 
   const handleUpload = async (files: FileList) => {
     if (!id) return;
@@ -175,6 +190,21 @@ export default function BookDetailPage() {
     window.open(pipelineApi.getPdfUrl(id), '_blank');
   };
 
+  const loadPreviewHtml = async () => {
+    if (!id) return;
+    setIsPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const data = await pipelineApi.getPreviewHtml(id);
+      setPreviewHtml(data.html);
+    } catch (error) {
+      console.error('Failed to load preview HTML', error);
+      setPreviewError('Failed to load book preview');
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
   const filteredAssets =
     statusFilter === 'all'
       ? assets
@@ -233,7 +263,7 @@ export default function BookDetailPage() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="upload" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full grid-cols-4 max-w-lg">
             <TabsTrigger value="upload" className="gap-2">
               <Upload className="h-4 w-4" />
@@ -433,6 +463,51 @@ export default function BookDetailPage() {
 
           {/* Preview Tab */}
           <TabsContent value="preview" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Live Preview</CardTitle>
+                    <CardDescription>Rendered book HTML, same as the PDF output.</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={loadPreviewHtml} disabled={isPreviewLoading}>
+                      {isPreviewLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Loading...
+                        </>
+                      ) : (
+                        'Refresh'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isPreviewLoading ? (
+                  <div className="flex items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                    Loading preview...
+                  </div>
+                ) : previewError ? (
+                  <div className="text-sm text-destructive">{previewError}</div>
+                ) : previewHtml ? (
+                  <div className="mt-2 border rounded-md overflow-hidden h-[70vh] bg-white">
+                    <iframe
+                      title="Book preview"
+                      srcDoc={previewHtml}
+                      className="w-full h-full"
+                    />
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Generate the book first to see a live preview.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">

@@ -129,6 +129,9 @@ export const pipelineApi = {
     apiRequest<PagePreview[]>(`/books/${bookId}/pages`),
   
   getPdfUrl: (bookId: string) => `${API_BASE_URL}/books/${bookId}/pdf`,
+
+  getPreviewHtml: (bookId: string) =>
+    apiRequest<{ html: string }>(`/books/${bookId}/preview-html`),
 };
 
 // Get thumbnail/image URL

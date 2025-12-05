@@ -5,7 +5,7 @@ Handles book generation and PDF output.
 """
 from datetime import datetime
 from typing import List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -17,7 +17,7 @@ from services.manifest import build_manifest
 from services.timeline import build_days_and_events
 from services.book_planner import plan_book
 from services.layout_engine import compute_all_layouts
-from services.render_pdf import render_book_to_pdf
+from services.render_pdf import render_book_to_pdf, render_book_to_html
 from storage.file_storage import FileStorage
 
 router = APIRouter()
@@ -37,6 +37,10 @@ class GenerateResponse(BaseModel):
     page_count: int
     pdf_path: str
     warnings: List[str]
+
+
+class PreviewHtmlResponse(BaseModel):
+    html: str
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -180,8 +184,52 @@ async def download_pdf(book_id: str):
         if not pdf_path.exists():
             raise HTTPException(status_code=404, detail="PDF file not found")
         
-        return FileResponse(
-            path=str(pdf_path),
-            filename=f"{book.title}.pdf",
-            media_type="application/pdf",
+    return FileResponse(
+        path=str(pdf_path),
+        filename=f"{book.title}.pdf",
+        media_type="application/pdf",
+    )
+
+
+@router.get("/preview-html", response_model=PreviewHtmlResponse)
+async def get_preview_html(book_id: str, request: Request):
+    """
+    Return the generated HTML for a book for live preview.
+    Does not write to disk.
+    """
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        all_pages = book.get_all_pages()
+        if not all_pages:
+            raise HTTPException(status_code=404, detail="Book has not been generated yet")
+
+        # Use approved assets only
+        approved_assets = assets_repo.list_assets(session, book_id, AssetStatus.APPROVED)
+        if not approved_assets:
+            raise HTTPException(status_code=400, detail="No approved assets found")
+
+        context = RenderContext(
+            book_size=book.size,
+            theme=Theme(),
         )
+        try:
+            layouts = compute_all_layouts(all_pages, context)
+            assets_dict = {a.id: a for a in approved_assets}
+            base_media_url = f"{str(request.base_url).rstrip('/')}/media"
+            html_content = render_book_to_html(
+                book=book,
+                layouts=layouts,
+                assets=assets_dict,
+                context=context,
+                media_root=str(storage.media_root),
+                mode="web",
+                media_base_url=base_media_url,
+            )
+        except Exception as e:
+            print(f"[preview-html] Failed to generate preview HTML for book {book_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to generate preview HTML")
+
+        return PreviewHtmlResponse(html=html_content)

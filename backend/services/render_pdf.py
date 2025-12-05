@@ -36,7 +36,9 @@ def render_book_to_pdf(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     
     # Generate HTML for the book
-    html_content = _generate_book_html(book, layouts, assets, context, media_root)
+    html_content = render_book_to_html(
+        book, layouts, assets, context, media_root, mode="pdf"
+    )
     
     # Try to render with WeasyPrint
     try:
@@ -57,12 +59,36 @@ def render_book_to_pdf(
         return _create_placeholder_pdf(output_path, book, layouts)
 
 
+def render_book_to_html(
+    book: Book,
+    layouts: List[PageLayout],
+    assets: Dict[str, Asset],
+    context: RenderContext,
+    media_root: str,
+    mode: str = "web",
+    media_base_url: str | None = None,
+) -> str:
+    """
+    Generate HTML for the entire book.
+    Does not touch disk; intended for preview rendering.
+
+    mode:
+      - "pdf": keep filesystem-relative paths (resolved via base_url) for WeasyPrint
+      - "web": use /media/{file_path} so the browser can load assets
+    """
+    return _generate_book_html(
+        book, layouts, assets, context, media_root, mode, media_base_url
+    )
+
+
 def _generate_book_html(
     book: Book,
     layouts: List[PageLayout],
     assets: Dict[str, Asset],
     context: RenderContext,
     media_root: str,
+    mode: str = "web",
+    media_base_url: str | None = None,
 ) -> str:
     """Generate HTML for the entire book."""
     theme = context.theme
@@ -71,7 +97,16 @@ def _generate_book_html(
     
     pages_html = []
     for layout in layouts:
-        page_html = _render_page_html(layout, assets, theme, width_mm, height_mm, media_root)
+        page_html = _render_page_html(
+            layout,
+            assets,
+            theme,
+            width_mm,
+            height_mm,
+            media_root,
+            mode,
+            media_base_url,
+        )
         pages_html.append(page_html)
     
     return f"""
@@ -95,6 +130,8 @@ def _render_page_html(
     width_mm: float,
     height_mm: float,
     media_root: str,
+    mode: str = "web",
+    media_base_url: str | None = None,
 ) -> str:
     """Render a single page to HTML."""
     bg_color = layout.background_color or theme.background_color
@@ -102,10 +139,15 @@ def _render_page_html(
     elements_html = []
     for elem in layout.elements:
         if elem.asset_id and elem.asset_id in assets:
-            # Image element
             asset = assets[elem.asset_id]
-            # Use relative path with forward slashes - WeasyPrint resolves against base_url
-            img_path = asset.file_path.replace("\\", "/")
+            # Path handling based on render mode
+            normalized_path = asset.file_path.replace("\\", "/")
+            if mode == "pdf":
+                # Use filesystem-relative path (WeasyPrint resolves via base_url)
+                img_path = normalized_path
+            else:
+                base = media_base_url.rstrip("/") if media_base_url else "/media"
+                img_path = f"{base}/{normalized_path}"
             elements_html.append(f"""
                 <div style="
                     position: absolute;
