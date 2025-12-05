@@ -13,7 +13,7 @@ weasyprint>=60.0  # HTML/CSS to PDF - requires system dependencies
 # reportlab>=4.0.0  # Alternative PDF generation
 
 # Future: Database
-# sqlalchemy>=2.0.0
+sqlalchemy>=2.0.0
 # alembic>=1.12.0
 
 # Future: S3 storage

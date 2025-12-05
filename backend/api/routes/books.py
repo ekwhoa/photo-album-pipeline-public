@@ -1,15 +1,17 @@
 """
 Books API routes.
 """
-from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.database import books_db, assets_db
+from db import SessionLocal
 from domain.models import Book, BookSize
+from repositories import BooksRepository, AssetsRepository
 
 router = APIRouter()
+books_repo = BooksRepository()
+assets_repo = AssetsRepository()
 
 
 class BookCreate(BaseModel):
@@ -29,19 +31,16 @@ class BookResponse(BaseModel):
     pdf_path: Optional[str] = None
 
 
-def book_to_response(book: Book) -> BookResponse:
+def book_to_response(book: Book, asset_count: int, approved_count: int) -> BookResponse:
     """Convert domain Book to API response."""
-    book_assets = [a for a in assets_db.values() if a.book_id == book.id]
-    approved = [a for a in book_assets if a.status.value == "approved"]
-    
     return BookResponse(
         id=book.id,
         title=book.title,
         size=book.size.value,
         created_at=book.created_at.isoformat(),
         updated_at=book.updated_at.isoformat(),
-        asset_count=len(book_assets),
-        approved_count=len(approved),
+        asset_count=asset_count,
+        approved_count=approved_count,
         last_generated=book.last_generated.isoformat() if book.last_generated else None,
         pdf_path=book.pdf_path,
     )
@@ -50,7 +49,13 @@ def book_to_response(book: Book) -> BookResponse:
 @router.get("", response_model=List[BookResponse])
 async def list_books():
     """List all books."""
-    return [book_to_response(book) for book in books_db.values()]
+    with SessionLocal() as session:
+        books = books_repo.list_books(session)
+        responses = []
+        for book in books:
+            total, approved = assets_repo.count_by_book(session, book.id)
+            responses.append(book_to_response(book, total, approved))
+        return responses
 
 
 @router.post("", response_model=BookResponse)
@@ -66,33 +71,30 @@ async def create_book(data: BookCreate):
         title=data.title,
         size=size,
     )
-    books_db[book.id] = book
-    return book_to_response(book)
+    with SessionLocal() as session:
+        saved = books_repo.create_book(session, book)
+        total, approved = assets_repo.count_by_book(session, saved.id)
+        return book_to_response(saved, total, approved)
 
 
 @router.get("/{book_id}", response_model=BookResponse)
 async def get_book(book_id: str):
     """Get a book by ID."""
-    book = books_db.get(book_id)
-    if not book:
-        raise HTTPException(status_code=404, detail="Book not found")
-    return book_to_response(book)
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+        total, approved = assets_repo.count_by_book(session, book.id)
+        return book_to_response(book, total, approved)
 
 
 @router.delete("/{book_id}")
 async def delete_book(book_id: str):
     """Delete a book and all its assets."""
-    if book_id not in books_db:
-        raise HTTPException(status_code=404, detail="Book not found")
-    
-    # Delete assets
-    asset_ids_to_delete = [a.id for a in assets_db.values() if a.book_id == book_id]
-    for asset_id in asset_ids_to_delete:
-        del assets_db[asset_id]
-    
-    # Delete book
-    del books_db[book_id]
-    
-    # TODO: Delete files from storage
-    
-    return {"status": "deleted"}
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+        books_repo.delete_book(session, book_id)
+        # TODO: Delete files from storage
+        return {"status": "deleted"}

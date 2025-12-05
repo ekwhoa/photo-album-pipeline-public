@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from api.routes import books, assets, pipeline
+from db import init_db
 from services.metadata_extractor import register_heif_opener
 
 # Register HEIF/HEIC opener at startup (for iPhone photos)
@@ -39,6 +40,12 @@ app.mount("/media", StaticFiles(directory=str(media_path)), name="media")
 app.include_router(books.router, prefix="/books", tags=["books"])
 app.include_router(assets.router, prefix="/books/{book_id}/assets", tags=["assets"])
 app.include_router(pipeline.router, prefix="/books/{book_id}", tags=["pipeline"])
+
+
+@app.on_event("startup")
+def startup_event():
+    """Initialize database tables on startup."""
+    init_db()
 
 
 @app.get("/")
