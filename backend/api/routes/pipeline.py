@@ -144,6 +144,10 @@ async def get_pages(book_id: str):
             summary = f"{len(asset_ids)} photos"
         elif page.page_type.value == "back_cover":
             summary = page.payload.get("text", "Back cover")
+        elif page.page_type.value == "trip_summary":
+            day_count = page.payload.get("day_count", 0)
+            photo_count = page.payload.get("photo_count", 0)
+            summary = f"Trip overview: {day_count} days, {photo_count} photos"
         else:
             summary = page.page_type.value
         
