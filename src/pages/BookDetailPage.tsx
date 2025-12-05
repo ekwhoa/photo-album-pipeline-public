@@ -493,12 +493,17 @@ export default function BookDetailPage() {
                 ) : previewError ? (
                   <div className="text-sm text-destructive">{previewError}</div>
                 ) : previewHtml ? (
-                  <div className="mt-2 border rounded-md overflow-hidden h-[70vh] bg-white">
-                    <iframe
-                      title="Book preview"
-                      srcDoc={previewHtml}
-                      className="w-full h-full"
-                    />
+                  <div className="mt-2 rounded-md overflow-hidden bg-muted/60 p-4">
+                    <div className="w-full h-[70vh] overflow-auto flex justify-center">
+                      <div className="min-w-[60%] max-w-4xl w-full">
+                        <iframe
+                          title="Book preview"
+                          srcDoc={previewHtml}
+                          className="w-full h-full border rounded-lg bg-background shadow-lg"
+                          style={{ minHeight: '100%' }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="text-sm text-muted-foreground">

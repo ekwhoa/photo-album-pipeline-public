@@ -109,12 +109,36 @@ def _generate_book_html(
         )
         pages_html.append(page_html)
     
+    extra_styles = ""
+    if mode == "web":
+        extra_styles = """
+        <style>
+            body {
+                margin: 0;
+                padding: 24px 0;
+                background: #e5e7eb;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                font-family: sans-serif;
+            }
+            .page {
+                margin: 16px 0;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #ffffff;
+            }
+        </style>
+        """
+
     return f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>{book.title}</title>
+    {extra_styles}
 </head>
 <body>
     {''.join(pages_html)}

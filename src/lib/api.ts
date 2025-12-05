@@ -34,6 +34,8 @@ export interface PagePreview {
   index: number;
   page_type: string;
   summary: string;
+  asset_ids?: string[];
+  hero_asset_id?: string | null;
 }
 
 export interface GenerateResult {
@@ -132,6 +134,9 @@ export const pipelineApi = {
 
   getPreviewHtml: (bookId: string) =>
     apiRequest<{ html: string }>(`/books/${bookId}/preview-html`),
+
+  getPagePreviewHtml: (bookId: string, pageIndex: number) =>
+    apiRequest<{ html: string }>(`/books/${bookId}/preview/pages/${pageIndex}/html`),
 };
 
 // Get thumbnail/image URL

@@ -55,32 +55,18 @@ export function PageDetailModal({
 }: PageDetailModalProps) {
   if (!page) return null;
 
-  const approvedAssets = assets.filter(a => a.status === 'approved');
   const icon = PAGE_ICONS[page.page_type] || <Image className="h-5 w-5" />;
   const label = PAGE_TYPE_LABELS[page.page_type] || page.page_type;
 
-  // Calculate which assets belong to this photo_grid page
-  const getPageAssets = () => {
-    if (page.page_type !== 'photo_grid') return [];
-    
-    // Count photo_grid pages before this one
-    const photoGridPages = pages.filter(p => p.page_type === 'photo_grid' && p.index < page.index);
-    
-    // Extract photo counts from previous pages
-    let assetsConsumed = 0;
-    for (const prevPage of photoGridPages) {
-      const match = prevPage.summary.match(/(\d+)\s*photos?/i);
-      assetsConsumed += match ? parseInt(match[1], 10) : 4;
-    }
-    
-    // Get count for current page
-    const match = page.summary.match(/(\d+)\s*photos?/i);
-    const currentPageCount = match ? parseInt(match[1], 10) : 4;
-    
-    return approvedAssets.slice(assetsConsumed, assetsConsumed + currentPageCount);
-  };
-
-  const pageAssets = getPageAssets();
+  const assetLookup = new Map(assets.map((a) => [a.id, a]));
+  const pageAssets =
+    page.page_type === 'photo_grid'
+      ? (page.asset_ids || []).map((id) => assetLookup.get(id)).filter(Boolean) as Asset[]
+      : [];
+  const heroAsset =
+    page.page_type === 'front_cover' && page.hero_asset_id
+      ? assetLookup.get(page.hero_asset_id)
+      : undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -119,9 +105,28 @@ export function PageDetailModal({
             </div>
           ) : page.page_type === 'front_cover' ? (
             <div className="text-center py-12 space-y-4 bg-muted/30 rounded-lg">
-              <BookOpen className="h-16 w-16 mx-auto text-muted-foreground" />
-              <h2 className="text-3xl font-bold text-foreground">{bookTitle || 'Untitled'}</h2>
-              <p className="text-muted-foreground">{page.summary}</p>
+              {heroAsset ? (
+                <div className="mx-auto max-w-xl">
+                  <div className="aspect-[3/4] rounded-lg overflow-hidden relative bg-muted">
+                    <img
+                      src={getThumbnailUrl(heroAsset)}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-b from-black/30 to-black/60" />
+                    <div className="absolute bottom-4 left-4 right-4 text-left text-white drop-shadow">
+                      <h2 className="text-3xl font-bold">{bookTitle || 'Untitled'}</h2>
+                      <p className="text-sm opacity-80">{page.summary}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <BookOpen className="h-16 w-16 mx-auto text-muted-foreground" />
+                  <h2 className="text-3xl font-bold text-foreground">{bookTitle || 'Untitled'}</h2>
+                  <p className="text-muted-foreground">{page.summary}</p>
+                </>
+              )}
             </div>
           ) : page.page_type === 'back_cover' ? (
             <div className="text-center py-12 space-y-4 bg-muted/30 rounded-lg">

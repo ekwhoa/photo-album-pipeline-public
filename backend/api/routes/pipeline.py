@@ -30,6 +30,8 @@ class PagePreviewResponse(BaseModel):
     index: int
     page_type: str
     summary: str
+    asset_ids: List[str] | None = None
+    hero_asset_id: str | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -42,6 +44,8 @@ class GenerateResponse(BaseModel):
 class PreviewHtmlResponse(BaseModel):
     html: str
 
+class PagePreviewHtmlResponse(BaseModel):
+    html: str
 
 @router.post("/generate", response_model=GenerateResponse)
 async def generate_book(book_id: str):
@@ -146,8 +150,11 @@ async def get_pages(book_id: str):
         previews = []
         for page in all_pages:
             # Generate summary based on page type
+            asset_ids = None
+            hero_asset_id = None
             if page.page_type.value == "front_cover":
                 summary = f"Title: {page.payload.get('title', 'Untitled')}"
+                hero_asset_id = page.payload.get("hero_asset_id")
             elif page.page_type.value == "photo_grid":
                 asset_ids = page.payload.get("asset_ids", [])
                 summary = f"{len(asset_ids)} photos"
@@ -164,6 +171,8 @@ async def get_pages(book_id: str):
                 index=page.index,
                 page_type=page.page_type.value,
                 summary=summary,
+                asset_ids=asset_ids,
+                hero_asset_id=hero_asset_id,
             ))
         
         return previews
@@ -233,3 +242,51 @@ async def get_preview_html(book_id: str, request: Request):
             raise HTTPException(status_code=500, detail="Failed to generate preview HTML")
 
         return PreviewHtmlResponse(html=html_content)
+
+
+@router.get("/preview/pages/{page_index}/html", response_model=PagePreviewHtmlResponse)
+async def get_page_preview_html(book_id: str, page_index: int, request: Request):
+    """
+    Return HTML for a single page for thumbnail previews.
+    """
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        all_pages = book.get_all_pages()
+        if not all_pages or page_index < 0 or page_index >= len(all_pages):
+            raise HTTPException(status_code=404, detail="Page not found")
+
+        approved_assets = assets_repo.list_assets(session, book_id, AssetStatus.APPROVED)
+        if not approved_assets:
+            raise HTTPException(status_code=400, detail="No approved assets found")
+
+        context = RenderContext(
+            book_size=book.size,
+            theme=Theme(),
+        )
+
+        try:
+            layouts = compute_all_layouts(all_pages, context)
+            layout = next((l for l in layouts if l.page_index == page_index), None)
+            if layout is None:
+                raise HTTPException(status_code=404, detail="Page not found")
+            assets_dict = {a.id: a for a in approved_assets}
+            base_media_url = f"{str(request.base_url).rstrip('/')}/media"
+            html_content = render_book_to_html(
+                book=book,
+                layouts=[layout],
+                assets=assets_dict,
+                context=context,
+                media_root=str(storage.media_root),
+                mode="web",
+                media_base_url=base_media_url,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[preview-page-html] Failed to generate page {page_index} HTML for book {book_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to generate page preview HTML")
+
+        return PagePreviewHtmlResponse(html=html_content)

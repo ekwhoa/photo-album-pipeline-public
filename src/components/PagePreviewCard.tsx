@@ -1,15 +1,14 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import {
-  BookOpen,
-  FileText,
-  Grid3X3,
-  Image,
-  MapPin,
-  Star,
-  Calendar,
-} from 'lucide-react';
+import { BookOpen, FileText, Grid3X3, Image, MapPin, Star, Calendar } from 'lucide-react';
 import { type Asset, type PagePreview, getThumbnailUrl } from '@/lib/api';
+
+interface PagePreviewCardProps {
+  page: PagePreview;
+  assets: Asset[];
+  bookTitle?: string;
+  onClick?: () => void;
+}
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   front_cover: 'Front Cover',
@@ -31,49 +30,25 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   itinerary: <Calendar className="h-4 w-4" />,
 };
 
-interface PagePreviewCardProps {
-  page: PagePreview;
-  assets: Asset[];
-  bookTitle?: string;
-  onClick?: () => void;
-}
-
 export function PagePreviewCard({ page, assets, bookTitle, onClick }: PagePreviewCardProps) {
-  const approvedAssets = assets.filter(a => a.status === 'approved');
-  const icon = PAGE_ICONS[page.page_type] || <Image className="h-4 w-4" />;
   const label = PAGE_TYPE_LABELS[page.page_type] || page.page_type;
+  const icon = PAGE_ICONS[page.page_type] || <Image className="h-4 w-4" />;
 
-  // Get thumbnails for photo grid pages
-  const getPageThumbnails = () => {
-    if (page.page_type !== 'photo_grid') return [];
-    // Extract photo count from summary (e.g., "4 photos")
-    const match = page.summary.match(/(\d+)\s*photos?/i);
-    const photoCount = match ? parseInt(match[1], 10) : 4;
-    
-    // Calculate which assets belong to this page based on page index
-    // Pages before this one that are photo_grids would have consumed some assets
-    const photoPagesBeforeThis = page.index - 2; // Subtract front_cover (0) and trip_summary (1)
-    const assetsPerPage = 4; // Rough estimate
-    const startIdx = Math.max(0, photoPagesBeforeThis * assetsPerPage);
-    const endIdx = startIdx + photoCount;
-    
-    return approvedAssets.slice(startIdx, endIdx).slice(0, 6);
-  };
-
-  const thumbnails = getPageThumbnails();
+  const assetLookup = new Map(assets.map((a) => [a.id, a]));
+  const pageAssets = (page.asset_ids || []).map((id) => assetLookup.get(id)).filter(Boolean) as Asset[];
+  const heroAsset = page.hero_asset_id ? assetLookup.get(page.hero_asset_id) : undefined;
 
   return (
-    <Card 
+    <Card
       className="cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all group overflow-hidden"
       onClick={onClick}
     >
       <CardContent className="p-0">
-        {/* Visual Preview Area */}
-        <div className="aspect-square bg-muted relative overflow-hidden">
-          {page.page_type === 'photo_grid' && thumbnails.length > 0 ? (
-            <div className="grid grid-cols-2 gap-0.5 p-1 h-full">
-              {thumbnails.slice(0, 4).map((asset, idx) => (
-                <div key={asset.id} className="relative overflow-hidden bg-background/50">
+        <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
+          {page.page_type === 'photo_grid' && pageAssets.length > 0 ? (
+            <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
+              {pageAssets.slice(0, 4).map((asset) => (
+                <div key={asset.id} className="relative overflow-hidden">
                   <img
                     src={getThumbnailUrl(asset)}
                     alt=""
@@ -81,51 +56,45 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick }: PagePrevie
                   />
                 </div>
               ))}
-              {thumbnails.length < 4 && Array.from({ length: 4 - thumbnails.length }).map((_, idx) => (
-                <div key={`empty-${idx}`} className="bg-background/30" />
+              {Array.from({ length: Math.max(0, 4 - pageAssets.length) }).map((_, idx) => (
+                <div key={`empty-${idx}`} className="bg-muted/60" />
               ))}
             </div>
-          ) : page.page_type === 'front_cover' || page.page_type === 'back_cover' ? (
-            <div className="flex flex-col items-center justify-center h-full p-4 text-center">
-              <BookOpen className="h-8 w-8 text-muted-foreground mb-2" />
-              <p className="text-sm font-medium text-foreground line-clamp-2">
-                {bookTitle || 'Untitled'}
-              </p>
-              {page.page_type === 'back_cover' && (
-                <p className="text-xs text-muted-foreground mt-1">© {bookTitle}</p>
-              )}
-            </div>
-          ) : page.page_type === 'trip_summary' ? (
-            <div className="flex flex-col items-center justify-center h-full p-4 text-center">
-              <FileText className="h-8 w-8 text-muted-foreground mb-2" />
-              <p className="text-xs text-muted-foreground line-clamp-3">
-                {page.summary}
-              </p>
+          ) : page.page_type === 'front_cover' && heroAsset ? (
+            <div className="w-full h-full relative">
+              <img
+                src={getThumbnailUrl(heroAsset)}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/30 to-black/50" />
+              <div className="absolute bottom-3 left-3 right-3 text-white drop-shadow">
+                <p className="text-sm font-semibold line-clamp-2">{bookTitle || 'Untitled'}</p>
+                <p className="text-xs opacity-80">{page.summary}</p>
+              </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full p-4">
+            <div className="flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground px-4 text-center">
               {icon}
-              <p className="text-xs text-muted-foreground mt-2 text-center">
-                {page.summary}
-              </p>
+              <span className="font-medium text-foreground">{label}</span>
+              <p className="line-clamp-3 text-muted-foreground">{page.summary}</p>
             </div>
           )}
-          
-          {/* Page number badge */}
-          <Badge 
-            variant="secondary" 
-            className="absolute top-2 left-2 text-xs"
-          >
-            {page.index + 1}
-          </Badge>
-        </div>
 
-        {/* Label */}
+          <div className="absolute top-2 left-2">
+            <span className="text-xs px-2 py-1 rounded bg-background/90 border text-foreground">
+              {page.index + 1}
+            </span>
+          </div>
+        </div>
         <div className="p-3 border-t">
           <div className="flex items-center gap-2">
             {icon}
-            <span className="text-sm font-medium">{label}</span>
+            <span className="text-sm font-medium truncate">{label}</span>
           </div>
+          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+            {page.summary}
+          </p>
         </div>
       </CardContent>
     </Card>
