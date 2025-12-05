@@ -1,0 +1,417 @@
+import { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { Header } from '@/components/Header';
+import { UploadZone } from '@/components/UploadZone';
+import { AssetGrid } from '@/components/AssetGrid';
+import { PagePreviewList } from '@/components/PagePreviewList';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  ArrowLeft,
+  Upload,
+  Filter,
+  Sparkles,
+  Layout,
+  Download,
+  Loader2,
+  Check,
+  X,
+  Image,
+} from 'lucide-react';
+import {
+  booksApi,
+  assetsApi,
+  pipelineApi,
+  type Book,
+  type Asset,
+  type PagePreview,
+} from '@/lib/api';
+import { toast } from 'sonner';
+
+export default function BookDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const [book, setBook] = useState<Book | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [pages, setPages] = useState<PagePreview[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
+
+  const loadBook = async () => {
+    if (!id) return;
+    try {
+      const [bookData, assetsData, pagesData] = await Promise.all([
+        booksApi.get(id),
+        assetsApi.list(id),
+        pipelineApi.getPages(id).catch(() => []),
+      ]);
+      setBook(bookData);
+      setAssets(assetsData);
+      setPages(pagesData);
+    } catch (error) {
+      console.error('Failed to load book:', error);
+      toast.error('Failed to load book details');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBook();
+  }, [id]);
+
+  const handleUpload = async (files: FileList) => {
+    if (!id) return;
+    setIsUploading(true);
+    try {
+      const newAssets = await assetsApi.upload(id, files);
+      setAssets((prev) => [...newAssets, ...prev]);
+      toast.success(`Uploaded ${newAssets.length} photo(s)`);
+    } catch (error) {
+      console.error('Upload failed:', error);
+      toast.error('Failed to upload photos');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleUpdateStatus = async (assetId: string, status: 'approved' | 'rejected') => {
+    if (!id) return;
+    try {
+      const updated = await assetsApi.updateStatus(id, assetId, status);
+      setAssets((prev) => prev.map((a) => (a.id === assetId ? updated : a)));
+    } catch (error) {
+      console.error('Failed to update status:', error);
+      toast.error('Failed to update photo status');
+    }
+  };
+
+  const handleBulkApprove = async () => {
+    if (!id || selectedAssets.size === 0) return;
+    try {
+      const updated = await assetsApi.bulkUpdateStatus(id, Array.from(selectedAssets), 'approved');
+      setAssets((prev) =>
+        prev.map((a) => updated.find((u) => u.id === a.id) || a)
+      );
+      setSelectedAssets(new Set());
+      toast.success(`Approved ${updated.length} photo(s)`);
+    } catch (error) {
+      toast.error('Failed to approve photos');
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (!id || selectedAssets.size === 0) return;
+    try {
+      const updated = await assetsApi.bulkUpdateStatus(id, Array.from(selectedAssets), 'rejected');
+      setAssets((prev) =>
+        prev.map((a) => updated.find((u) => u.id === a.id) || a)
+      );
+      setSelectedAssets(new Set());
+      toast.success(`Rejected ${updated.length} photo(s)`);
+    } catch (error) {
+      toast.error('Failed to reject photos');
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!id) return;
+    setIsGenerating(true);
+    try {
+      const result = await pipelineApi.generate(id);
+      if (result.success) {
+        toast.success(`Book generated! ${result.page_count} pages created.`);
+        const pagesData = await pipelineApi.getPages(id);
+        setPages(pagesData);
+        const bookData = await booksApi.get(id);
+        setBook(bookData);
+      } else {
+        toast.error('Generation failed');
+      }
+    } catch (error) {
+      console.error('Generation failed:', error);
+      toast.error('Failed to generate book');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleDownloadPdf = () => {
+    if (!id) return;
+    window.open(pipelineApi.getPdfUrl(id), '_blank');
+  };
+
+  const filteredAssets =
+    statusFilter === 'all'
+      ? assets
+      : assets.filter((a) => a.status === statusFilter);
+
+  const approvedCount = assets.filter((a) => a.status === 'approved').length;
+  const importedCount = assets.filter((a) => a.status === 'imported').length;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="flex items-center justify-center py-32">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!book) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="container mx-auto px-4 py-16 text-center">
+          <p className="text-muted-foreground">Book not found</p>
+          <Link to="/" className="text-primary hover:underline mt-4 inline-block">
+            Back to books
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+
+      <main className="container mx-auto px-4 py-6">
+        {/* Breadcrumb & Title */}
+        <div className="mb-6">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mb-3"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to books
+          </Link>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground">{book.title}</h1>
+              <p className="text-muted-foreground mt-1">
+                {book.size} • {assets.length} photos • {approvedCount} approved
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <Tabs defaultValue="upload" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-4 max-w-lg">
+            <TabsTrigger value="upload" className="gap-2">
+              <Upload className="h-4 w-4" />
+              Upload
+            </TabsTrigger>
+            <TabsTrigger value="curate" className="gap-2">
+              <Filter className="h-4 w-4" />
+              Curate
+            </TabsTrigger>
+            <TabsTrigger value="generate" className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              Generate
+            </TabsTrigger>
+            <TabsTrigger value="preview" className="gap-2">
+              <Layout className="h-4 w-4" />
+              Preview
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Upload Tab */}
+          <TabsContent value="upload" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <CardTitle>Upload Photos</CardTitle>
+                <CardDescription>
+                  Add photos to your book. They'll start with "imported" status.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <UploadZone onUpload={handleUpload} isUploading={isUploading} />
+              </CardContent>
+            </Card>
+
+            {assets.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recently Added</CardTitle>
+                  <CardDescription>
+                    {importedCount} photo(s) waiting for curation
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <AssetGrid
+                    assets={assets.filter((a) => a.status === 'imported').slice(0, 12)}
+                    onUpdateStatus={handleUpdateStatus}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Curate Tab */}
+          <TabsContent value="curate" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Curate Photos</CardTitle>
+                    <CardDescription>
+                      Approve or reject photos. Only approved photos will be included in the book.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="all">All ({assets.length})</option>
+                      <option value="imported">Imported ({importedCount})</option>
+                      <option value="approved">Approved ({approvedCount})</option>
+                      <option value="rejected">
+                        Rejected ({assets.filter((a) => a.status === 'rejected').length})
+                      </option>
+                    </select>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {selectedAssets.size > 0 && (
+                  <div className="flex items-center gap-2 mb-4 p-3 bg-muted rounded-lg">
+                    <span className="text-sm text-muted-foreground">
+                      {selectedAssets.size} selected
+                    </span>
+                    <Button size="sm" variant="outline" onClick={handleBulkApprove}>
+                      <Check className="h-3 w-3 mr-1" />
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleBulkReject}>
+                      <X className="h-3 w-3 mr-1" />
+                      Reject
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSelectedAssets(new Set())}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                )}
+                <AssetGrid
+                  assets={filteredAssets}
+                  onUpdateStatus={handleUpdateStatus}
+                  selectedIds={selectedAssets}
+                  onSelectionChange={setSelectedAssets}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Generate Tab */}
+          <TabsContent value="generate" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <CardTitle>Generate Book</CardTitle>
+                <CardDescription>
+                  Run the pipeline to create your photo book from approved photos.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="p-4 rounded-lg bg-muted">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                      <Image className="h-4 w-4" />
+                      Total Photos
+                    </div>
+                    <div className="text-2xl font-semibold">{assets.length}</div>
+                  </div>
+                  <div className="p-4 rounded-lg bg-success/10">
+                    <div className="flex items-center gap-2 text-sm text-success mb-1">
+                      <Check className="h-4 w-4" />
+                      Approved
+                    </div>
+                    <div className="text-2xl font-semibold text-success">{approvedCount}</div>
+                  </div>
+                  <div className="p-4 rounded-lg bg-muted">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                      <Layout className="h-4 w-4" />
+                      Pages
+                    </div>
+                    <div className="text-2xl font-semibold">{pages.length || '—'}</div>
+                  </div>
+                </div>
+
+                {approvedCount === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground">
+                      No approved photos yet. Go to the Curate tab to approve some photos first.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <Button
+                      size="lg"
+                      onClick={handleGenerate}
+                      disabled={isGenerating || approvedCount === 0}
+                    >
+                      {isGenerating ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          Generate Book
+                        </>
+                      )}
+                    </Button>
+                    {book.last_generated && (
+                      <span className="text-sm text-muted-foreground">
+                        Last generated:{' '}
+                        {new Date(book.last_generated).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Preview Tab */}
+          <TabsContent value="preview" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Book Preview</CardTitle>
+                    <CardDescription>
+                      View the generated pages and download your PDF.
+                    </CardDescription>
+                  </div>
+                  {book.pdf_path && (
+                    <Button onClick={handleDownloadPdf}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Download PDF
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <PagePreviewList pages={pages} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </main>
+    </div>
+  );
+}
