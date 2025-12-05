@@ -104,7 +104,8 @@ def _render_page_html(
         if elem.asset_id and elem.asset_id in assets:
             # Image element
             asset = assets[elem.asset_id]
-            img_path = os.path.join(media_root, asset.file_path)
+            # Use relative path with forward slashes - WeasyPrint resolves against base_url
+            img_path = asset.file_path.replace("\\", "/")
             elements_html.append(f"""
                 <div style="
                     position: absolute;
@@ -114,7 +115,7 @@ def _render_page_html(
                     height: {elem.height_mm}mm;
                     overflow: hidden;
                 ">
-                    <img src="file://{img_path}" style="
+                    <img src="{img_path}" style="
                         width: 100%;
                         height: 100%;
                         object-fit: cover;
