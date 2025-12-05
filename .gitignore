@@ -22,3 +22,46 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python venvs
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Env files
+.env
+.env.*
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Media generated at runtime (photos, thumbnails, exports)
+media/
+backend/media/
+
+# Node / frontend (if you install locally)
+node_modules/
+dist/
+build/
+.next/
+
+# Backend Python virtualenv
+backend/.venv/
+
+# Backend Python bytecode/cache
+backend/**/__pycache__/
+backend/**/*.py[cod]
+
+# Backend media (uploaded photos, thumbnails, exports)
+backend/media/
