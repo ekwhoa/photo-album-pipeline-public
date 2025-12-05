@@ -3,7 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { UploadZone } from '@/components/UploadZone';
 import { AssetGrid } from '@/components/AssetGrid';
-import { PagePreviewList } from '@/components/PagePreviewList';
+import { PagePreviewCard } from '@/components/PagePreviewCard';
+import { PageDetailModal } from '@/components/PageDetailModal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -19,6 +20,7 @@ import {
   Check,
   X,
   Image,
+  CheckCheck,
 } from 'lucide-react';
 import {
   booksApi,
@@ -40,6 +42,8 @@ export default function BookDetailPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
+  const [selectedPage, setSelectedPage] = useState<PagePreview | null>(null);
+  const [isApprovingAll, setIsApprovingAll] = useState(false);
 
   const loadBook = async () => {
     if (!id) return;
@@ -115,6 +119,32 @@ export default function BookDetailPage() {
       toast.success(`Rejected ${updated.length} photo(s)`);
     } catch (error) {
       toast.error('Failed to reject photos');
+    }
+  };
+
+  const handleApproveAllImported = async () => {
+    if (!id) return;
+    const importedIds = assets
+      .filter((a) => a.status === 'imported')
+      .map((a) => a.id);
+    
+    if (importedIds.length === 0) {
+      toast.info('No imported photos to approve');
+      return;
+    }
+    
+    setIsApprovingAll(true);
+    try {
+      const updated = await assetsApi.bulkUpdateStatus(id, importedIds, 'approved');
+      setAssets((prev) =>
+        prev.map((a) => updated.find((u) => u.id === a.id) || a)
+      );
+      setSelectedAssets(new Set());
+      toast.success(`Approved ${updated.length} photo(s)`);
+    } catch (error) {
+      toast.error('Failed to approve photos');
+    } finally {
+      setIsApprovingAll(false);
     }
   };
 
@@ -259,7 +289,7 @@ export default function BookDetailPage() {
           <TabsContent value="curate" className="space-y-6 animate-fade-in">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-4">
                   <div>
                     <CardTitle>Curate Photos</CardTitle>
                     <CardDescription>
@@ -267,6 +297,21 @@ export default function BookDetailPage() {
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
+                    {importedCount > 0 && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={handleApproveAllImported}
+                        disabled={isApprovingAll}
+                      >
+                        {isApprovingAll ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <CheckCheck className="h-4 w-4 mr-2" />
+                        )}
+                        Approve all imported ({importedCount})
+                      </Button>
+                    )}
                     <select
                       value={statusFilter}
                       onChange={(e) => setStatusFilter(e.target.value)}
@@ -394,7 +439,7 @@ export default function BookDetailPage() {
                   <div>
                     <CardTitle>Book Preview</CardTitle>
                     <CardDescription>
-                      View the generated pages and download your PDF.
+                      Click a page to see details. Download the PDF for the final output.
                     </CardDescription>
                   </div>
                   {book.pdf_path && (
@@ -406,10 +451,39 @@ export default function BookDetailPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <PagePreviewList pages={pages} />
+                {pages.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Layout className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground">
+                      No pages generated yet. Go to the Generate tab to create your book.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    {pages.map((page) => (
+                      <PagePreviewCard
+                        key={page.index}
+                        page={page}
+                        assets={assets}
+                        bookTitle={book.title}
+                        onClick={() => setSelectedPage(page)}
+                      />
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Page Detail Modal */}
+          <PageDetailModal
+            page={selectedPage}
+            pages={pages}
+            assets={assets}
+            bookTitle={book.title}
+            open={!!selectedPage}
+            onOpenChange={(open) => !open && setSelectedPage(null)}
+          />
         </Tabs>
       </main>
     </div>
