@@ -5,6 +5,7 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
+from PIL import Image, ImageOps
 
 from db import SessionLocal
 from domain.models import Asset, AssetMetadata, AssetStatus, AssetType
@@ -134,22 +135,33 @@ async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
                 asset_id=asset_id,
             )
             
-            # Ensure we have dimensions (may need to re-read after conversion)
-            if metadata.width is None or metadata.height is None:
+            # Ensure we have dimensions (may need to re-read after conversion), using EXIF-aware orientation
+            if metadata.width is None or metadata.height is None or metadata.orientation is None:
                 try:
-                    from PIL import Image
                     img = Image.open(BytesIO(storage_bytes))
+                    img = ImageOps.exif_transpose(img)
                     metadata.width = img.width
                     metadata.height = img.height
-                    if metadata.orientation is None:
-                        if img.width > img.height:
-                            metadata.orientation = "landscape"
-                        elif img.width < img.height:
-                            metadata.orientation = "portrait"
-                        else:
-                            metadata.orientation = "square"
+                    if img.width > img.height:
+                        metadata.orientation = "landscape"
+                    elif img.width < img.height:
+                        metadata.orientation = "portrait"
+                    else:
+                        metadata.orientation = "square"
                 except Exception:
                     pass
+            
+            # Generate thumbnail
+            thumbnail_path = None
+            try:
+                thumb_bytes = _generate_thumbnail(storage_bytes, max_size=512)
+                thumbnail_path = storage.save_thumbnail(
+                    book_id=book_id,
+                    file=BytesIO(thumb_bytes),
+                    asset_id=asset_id,
+                )
+            except Exception as e:
+                print(f"[thumbnail] Failed to generate thumbnail for asset {asset_id}: {e}")
             
             # Create asset
             asset = Asset(
@@ -158,6 +170,7 @@ async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
                 status=AssetStatus.IMPORTED,
                 type=AssetType.PHOTO,
                 file_path=file_path,
+                thumbnail_path=thumbnail_path,
                 metadata=metadata,
             )
             saved = assets_repo.create_asset(session, asset)
@@ -173,6 +186,27 @@ def _change_extension(filename: str, new_ext: str) -> str:
     else:
         base = filename
     return base + new_ext
+
+
+def _generate_thumbnail(image_bytes: bytes, max_size: int = 512) -> bytes:
+    """
+    Generate a JPEG thumbnail from image bytes.
+    
+    Args:
+        image_bytes: Source image data (after any conversions)
+        max_size: Max dimension (width or height)
+    
+    Returns:
+        JPEG bytes of the thumbnail.
+    """
+    with Image.open(BytesIO(image_bytes)) as img:
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
+        img.thumbnail((max_size, max_size))
+        output = BytesIO()
+        img.save(output, format="JPEG", quality=85, optimize=True)
+        output.seek(0)
+        return output.read()
 
 
 @router.patch("/{asset_id}/status", response_model=AssetResponse)
