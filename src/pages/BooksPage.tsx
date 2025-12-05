@@ -10,6 +10,7 @@ export default function BooksPage() {
   const [books, setBooks] = useState<BookType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadBooks = async () => {
     try {
@@ -38,6 +39,20 @@ export default function BooksPage() {
       toast.error('Failed to create book');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleDeleteBook = async (book: BookType) => {
+    setDeletingId(book.id);
+    try {
+      await booksApi.delete(book.id);
+      setBooks((prev) => prev.filter((b) => b.id !== book.id));
+      toast.success('Book deleted');
+    } catch (error) {
+      console.error('Failed to delete book:', error);
+      toast.error('Failed to delete book');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -73,7 +88,12 @@ export default function BooksPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {books.map((book) => (
-              <BookCard key={book.id} book={book} />
+              <BookCard
+                key={book.id}
+                book={book}
+                onDelete={handleDeleteBook}
+                isDeleting={deletingId === book.id}
+              />
             ))}
           </div>
         )}
