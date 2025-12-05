@@ -8,10 +8,12 @@ from pydantic import BaseModel
 from db import SessionLocal
 from domain.models import Book, BookSize
 from repositories import BooksRepository, AssetsRepository
+from storage.file_storage import FileStorage
 
 router = APIRouter()
 books_repo = BooksRepository()
 assets_repo = AssetsRepository()
+storage = FileStorage()
 
 
 class BookCreate(BaseModel):
@@ -96,5 +98,9 @@ async def delete_book(book_id: str):
         if not book:
             raise HTTPException(status_code=404, detail="Book not found")
         books_repo.delete_book(session, book_id)
-        # TODO: Delete files from storage
+        # Best-effort file cleanup
+        try:
+            storage.delete_book_files(book_id)
+        except Exception as e:
+            print(f"[delete_book] Failed to delete media for book {book_id}: {e}")
         return {"status": "deleted"}
