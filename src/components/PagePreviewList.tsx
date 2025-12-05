@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { BookOpen, Image, Layout } from 'lucide-react';
+import { BookOpen, Image, Layout, FileText } from 'lucide-react';
 import type { PagePreview } from '@/lib/api';
 import { PAGE_TYPE_LABELS, PageType } from '@/types/book';
 
@@ -12,6 +12,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   front_cover: <BookOpen className="h-4 w-4" />,
   back_cover: <BookOpen className="h-4 w-4" />,
   photo_grid: <Image className="h-4 w-4" />,
+  trip_summary: <FileText className="h-4 w-4" />,
 };
 
 export function PagePreviewList({ pages }: PagePreviewListProps) {

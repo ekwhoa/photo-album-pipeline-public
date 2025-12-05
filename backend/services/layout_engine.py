@@ -302,8 +302,78 @@ def layout_photobooth_strip(page: Page, context: RenderContext) -> PageLayout:
 
 @register_layout(PageType.TRIP_SUMMARY)
 def layout_trip_summary(page: Page, context: RenderContext) -> PageLayout:
-    """Placeholder for trip summary layout."""
-    raise NotImplementedError("Trip summary layout not yet implemented")
+    """
+    Layout for trip summary page.
+    
+    Displays book title, date range, and trip statistics.
+    """
+    theme = context.theme
+    width = context.page_width_mm
+    height = context.page_height_mm
+    margin = theme.page_margin_mm
+    
+    elements = []
+    
+    # Title (centered, near top)
+    title = page.payload.get("title", "Trip Summary")
+    elements.append(LayoutRect(
+        x_mm=margin,
+        y_mm=margin + 20,
+        width_mm=width - 2 * margin,
+        height_mm=20,
+        text=title,
+        font_size=28,
+        color=theme.primary_color,
+    ))
+    
+    # Subtitle / date range
+    subtitle = page.payload.get("subtitle", "")
+    if subtitle:
+        elements.append(LayoutRect(
+            x_mm=margin,
+            y_mm=margin + 50,
+            width_mm=width - 2 * margin,
+            height_mm=14,
+            text=subtitle,
+            font_size=14,
+            color=theme.secondary_color,
+        ))
+    
+    # Stats section (centered vertically)
+    stats_y = height * 0.4
+    line_height = 16
+    
+    day_count = page.payload.get("day_count", 0)
+    photo_count = page.payload.get("photo_count", 0)
+    event_count = page.payload.get("event_count", 0)
+    locations_count = page.payload.get("locations_count")
+    
+    stats_lines = [
+        f"Days: {day_count}",
+        f"Photos: {photo_count}",
+        f"Events: {event_count}",
+    ]
+    
+    if locations_count:
+        stats_lines.append(f"Locations: {locations_count}")
+    
+    for i, line in enumerate(stats_lines):
+        elements.append(LayoutRect(
+            x_mm=margin,
+            y_mm=stats_y + i * line_height,
+            width_mm=width - 2 * margin,
+            height_mm=12,
+            text=line,
+            font_size=16,
+            color=theme.primary_color,
+        ))
+    
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=theme.background_color,
+        elements=elements,
+    )
 
 
 @register_layout(PageType.ITINERARY)
