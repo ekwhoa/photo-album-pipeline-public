@@ -3,13 +3,18 @@ Assets API routes.
 """
 from datetime import datetime
 from io import BytesIO
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from api.database import books_db, assets_db
 from domain.models import Asset, AssetMetadata, AssetStatus, AssetType
 from services.curation import set_asset_status
+from services.metadata_extractor import (
+    extract_exif_metadata,
+    is_heic_file,
+    convert_heic_to_jpeg,
+)
 from storage.file_storage import FileStorage
 
 router = APIRouter()
@@ -49,6 +54,11 @@ def asset_to_response(asset: Asset) -> AssetResponse:
             "height": asset.metadata.height,
             "orientation": asset.metadata.orientation,
             "taken_at": asset.metadata.taken_at.isoformat() if asset.metadata.taken_at else None,
+            "camera": asset.metadata.camera,
+            "gps_lat": asset.metadata.gps_lat,
+            "gps_lon": asset.metadata.gps_lon,
+            "gps_altitude": asset.metadata.gps_altitude,
+            "location": asset.metadata.location,
         },
     )
 
@@ -81,33 +91,59 @@ async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
     for file in files:
         # Generate asset ID
         asset_id = Asset.generate_id()
+        original_filename = file.filename or "photo.jpg"
         
-        # Save file
+        # Read file content
         file_content = await file.read()
+        
+        # Extract EXIF metadata from original bytes (works for HEIC too)
+        try:
+            metadata = extract_exif_metadata(file_content)
+        except Exception:
+            metadata = AssetMetadata()
+        
+        # Determine if this is a HEIC file and needs conversion
+        is_heic = is_heic_file(original_filename, file.content_type)
+        
+        # Prepare bytes and filename for storage
+        if is_heic:
+            try:
+                # Convert HEIC to JPEG
+                storage_bytes = convert_heic_to_jpeg(file_content)
+                # Change extension to .jpg
+                storage_filename = _change_extension(original_filename, ".jpg")
+            except Exception:
+                # HEIC conversion failed - try to save original anyway
+                storage_bytes = file_content
+                storage_filename = original_filename
+        else:
+            storage_bytes = file_content
+            storage_filename = original_filename
+        
+        # Save file to storage
         file_path = storage.save_photo(
             book_id=book_id,
-            file=BytesIO(file_content),
-            filename=file.filename or "photo.jpg",
+            file=BytesIO(storage_bytes),
+            filename=storage_filename,
             asset_id=asset_id,
         )
         
-        # Extract basic metadata (placeholder for now)
-        metadata = AssetMetadata()
-        try:
-            from PIL import Image
-            img = Image.open(BytesIO(file_content))
-            metadata.width = img.width
-            metadata.height = img.height
-            if img.width > img.height:
-                metadata.orientation = "landscape"
-            elif img.width < img.height:
-                metadata.orientation = "portrait"
-            else:
-                metadata.orientation = "square"
-        except ImportError:
-            pass  # PIL not available
-        except Exception:
-            pass  # Image parsing failed
+        # Ensure we have dimensions (may need to re-read after conversion)
+        if metadata.width is None or metadata.height is None:
+            try:
+                from PIL import Image
+                img = Image.open(BytesIO(storage_bytes))
+                metadata.width = img.width
+                metadata.height = img.height
+                if metadata.orientation is None:
+                    if img.width > img.height:
+                        metadata.orientation = "landscape"
+                    elif img.width < img.height:
+                        metadata.orientation = "portrait"
+                    else:
+                        metadata.orientation = "square"
+            except Exception:
+                pass
         
         # Create asset
         asset = Asset(
@@ -122,6 +158,15 @@ async def upload_assets(book_id: str, files: List[UploadFile] = File(...)):
         uploaded.append(asset)
     
     return [asset_to_response(a) for a in uploaded]
+
+
+def _change_extension(filename: str, new_ext: str) -> str:
+    """Change the file extension."""
+    if "." in filename:
+        base = filename.rsplit(".", 1)[0]
+    else:
+        base = filename
+    return base + new_ext
 
 
 @router.patch("/{asset_id}/status", response_model=AssetResponse)

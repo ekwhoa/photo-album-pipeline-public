@@ -72,6 +72,12 @@ class AssetMetadata:
     taken_at: Optional[datetime] = None
     camera: Optional[str] = None
     location: Optional[Dict[str, float]] = None  # {"lat": ..., "lng": ...}
+    # GPS fields
+    gps_lat: Optional[float] = None
+    gps_lon: Optional[float] = None
+    gps_altitude: Optional[float] = None
+    # Raw EXIF data for debugging/future use
+    raw_exif: Optional[Dict[str, Any]] = None
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AssetMetadata":
@@ -85,6 +91,10 @@ class AssetMetadata:
             taken_at=taken_at,
             camera=data.get("camera"),
             location=data.get("location"),
+            gps_lat=data.get("gps_lat"),
+            gps_lon=data.get("gps_lon"),
+            gps_altitude=data.get("gps_altitude"),
+            raw_exif=data.get("raw_exif"),
         )
 
 
