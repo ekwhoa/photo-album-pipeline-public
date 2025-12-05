@@ -142,13 +142,32 @@ def _create_trip_summary_page(
         if a.metadata and a.metadata.gps_lat is not None and a.metadata.gps_lon is not None
     )
     
-    # Get date range
-    dates = [d.date for d in days if d.date]
-    start_date = min(dates).isoformat() if dates else None
-    end_date = max(dates).isoformat() if dates else None
+    # Get date range from EXIF taken_at only (not created_at fallback)
+    exif_dates = [
+        a.metadata.taken_at.date() for a in assets
+        if a.metadata and a.metadata.taken_at is not None
+    ]
     
-    # Generate subtitle
-    subtitle = _generate_subtitle(days)
+    if exif_dates:
+        start_date = min(exif_dates).isoformat()
+        end_date = max(exif_dates).isoformat()
+        # Generate subtitle from EXIF dates
+        start = min(exif_dates)
+        end = max(exif_dates)
+        if start == end:
+            subtitle = start.strftime("%B %d, %Y")
+        elif start.year == end.year:
+            if start.month == end.month:
+                subtitle = f"{start.strftime('%B %d')} - {end.strftime('%d, %Y')}"
+            else:
+                subtitle = f"{start.strftime('%B %d')} - {end.strftime('%B %d, %Y')}"
+        else:
+            subtitle = f"{start.strftime('%B %Y')} - {end.strftime('%B %Y')}"
+    else:
+        # No EXIF timestamps - use simple fallback
+        start_date = None
+        end_date = None
+        subtitle = f"{day_count} days • {photo_count} photos"
     
     return Page(
         index=index,
