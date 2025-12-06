@@ -267,6 +267,119 @@ def _render_map_route_card(
     """
 
 
+def _render_trip_summary_card(
+    layout: PageLayout,
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+) -> str:
+    """Render trip summary with card styling consistent with map route."""
+    bg_color = layout.background_color or theme.background_color
+
+    title = "Trip summary"
+    subtitle = ""
+    stats: List[str] = []
+
+    for elem in layout.elements:
+        if elem.text:
+            if title == "Trip summary":
+                title = elem.text
+            elif not subtitle:
+                subtitle = elem.text
+            else:
+                stats.append(elem.text)
+
+    stats = [s for s in stats if s.strip()]
+    grid_items = "".join(
+        f"""
+        <div class="stat-card">
+            <div class="stat-value">{line.split(':')[1].strip()}</div>
+            <div class="stat-label">{line.split(':')[0].strip()}</div>
+        </div>
+        """
+        for line in stats
+    )
+
+    return f"""
+    <div class="page trip-summary-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {bg_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+    ">
+        <style>
+            .trip-summary-page {{
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+            }}
+            .trip-summary-card {{
+                max-width: 190mm;
+                width: 88%;
+                margin: 18mm auto 14mm;
+                padding: 14mm 12mm;
+                background: #f8fafc;
+                border: 1px solid #d9e2ec;
+                border-radius: 10px;
+                box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
+                display: flex;
+                flex-direction: column;
+                gap: 6mm;
+                align-items: center;
+                text-align: center;
+            }}
+            .trip-summary-title {{
+                font-family: {theme.title_font_family};
+                font-size: 24pt;
+                letter-spacing: 0.2pt;
+                margin: 0;
+                color: {theme.primary_color};
+            }}
+            .trip-summary-subtitle {{
+                font-size: 12pt;
+                color: {theme.secondary_color};
+                margin: 0;
+            }}
+            .trip-summary-stats {{
+                width: 100%;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(40mm, 1fr));
+                gap: 6mm;
+            }}
+            .stat-card {{
+                padding: 6mm;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+            }}
+            .stat-value {{
+                font-family: {theme.title_font_family};
+                font-size: 18pt;
+                margin-bottom: 2mm;
+                color: {theme.primary_color};
+            }}
+            .stat-label {{
+                font-size: 10pt;
+                color: {theme.secondary_color};
+                letter-spacing: 0.3pt;
+                text-transform: uppercase;
+            }}
+        </style>
+        <div class="trip-summary-card">
+            <h1 class="trip-summary-title">{title}</h1>
+            <p class="trip-summary-subtitle">{subtitle}</p>
+            <div class="trip-summary-stats">
+                {grid_items}
+            </div>
+        </div>
+    </div>
+    """
+
+
 def _render_page_html(
     layout: PageLayout,
     assets: Dict[str, Asset],
@@ -280,6 +393,8 @@ def _render_page_html(
     """Render a single page to HTML."""
     if layout.page_type == PageType.MAP_ROUTE:
         return _render_map_route_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
+    if layout.page_type == PageType.TRIP_SUMMARY:
+        return _render_trip_summary_card(layout, theme, width_mm, height_mm)
 
     bg_color = layout.background_color or theme.background_color
     
