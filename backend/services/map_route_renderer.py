@@ -10,11 +10,11 @@ from pathlib import Path
 from statistics import median
 from typing import List, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-UPSCALE_FACTOR = 3
+UPSCALE_FACTOR = 4
 
 # Directories
 DATA_DIR = BASE_DIR / "data"
@@ -129,16 +129,16 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
         smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
 
-        img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
-        draw = ImageDraw.Draw(img, "RGBA")
+        background_img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
+        bg_draw = ImageDraw.Draw(background_img, "RGBA")
 
         # Subtle grid texture
         grid_step = int(grid_spacing * UPSCALE_FACTOR)
         grid_line_width = max(1, int(1 * UPSCALE_FACTOR / 2))
         for x in range(0, draw_width + 1, grid_step):
-            draw.line([(x, 0), (x, draw_height)], fill=grid_color, width=grid_line_width)
+            bg_draw.line([(x, 0), (x, draw_height)], fill=grid_color, width=grid_line_width)
         for y in range(0, draw_height + 1, grid_step):
-            draw.line([(0, y), (draw_width, y)], fill=grid_color, width=grid_line_width)
+            bg_draw.line([(0, y), (draw_width, y)], fill=grid_color, width=grid_line_width)
 
         if coords and DEBUG_MAP_RENDERING:
             xs, ys = zip(*coords)
@@ -161,34 +161,40 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
                     draw_width - margin_px * UPSCALE_FACTOR,
                     draw_height - margin_px * UPSCALE_FACTOR,
                 )
-                draw.rectangle(safe_box, outline="#d0d7de", width=max(1, int(2 * UPSCALE_FACTOR)))
+                bg_draw.rectangle(safe_box, outline="#d0d7de", width=max(1, int(2 * UPSCALE_FACTOR)))
 
-            # Halo
-            draw.line(smoothed_scaled, fill=halo_color, width=int(halo_width * UPSCALE_FACTOR), joint="curve")
+            route_layer = Image.new("RGBA", (draw_width, draw_height), (0, 0, 0, 0))
+            route_draw = ImageDraw.Draw(route_layer, "RGBA")
 
-            # Gradient core line
-            _draw_gradient_polyline(draw, smoothed_scaled, start_color, end_color, width=int(route_width * UPSCALE_FACTOR))
+            route_draw.line(smoothed_scaled, fill=halo_color, width=int(halo_width * UPSCALE_FACTOR), joint="curve")
+            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(route_width * UPSCALE_FACTOR))
 
-            # Start / end markers
-            _draw_marker(draw, coords_scaled[0], radius=int(10 * UPSCALE_FACTOR), fill="#3cb371", outline=marker_outline)
-            _draw_marker(draw, coords_scaled[-1], radius=int(10 * UPSCALE_FACTOR), fill="#e63946", outline=marker_outline)
+            blurred_route = route_layer.filter(ImageFilter.GaussianBlur(radius=1.0 * UPSCALE_FACTOR))
+            blended_route = Image.alpha_composite(blurred_route, route_layer)
 
-            _draw_legend(draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
+            composed = Image.alpha_composite(background_img, blended_route)
 
-        # Outer frame
-        frame_margin = int(8 * UPSCALE_FACTOR)
-        frame_bbox = (
-            frame_margin,
-            frame_margin,
-            draw_width - frame_margin,
-            draw_height - frame_margin,
-        )
-        draw.rounded_rectangle(frame_bbox, radius=int(12 * UPSCALE_FACTOR), outline=frame_color, width=int(frame_width * UPSCALE_FACTOR))
+            overlay_draw = ImageDraw.Draw(composed, "RGBA")
+            _draw_marker(overlay_draw, coords_scaled[0], radius=int(10 * UPSCALE_FACTOR), fill="#3cb371", outline=marker_outline)
+            _draw_marker(overlay_draw, coords_scaled[-1], radius=int(10 * UPSCALE_FACTOR), fill="#e63946", outline=marker_outline)
+
+            _draw_legend(overlay_draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
+
+            frame_margin = int(8 * UPSCALE_FACTOR)
+            frame_bbox = (
+                frame_margin,
+                frame_margin,
+                draw_width - frame_margin,
+                draw_height - frame_margin,
+            )
+            overlay_draw.rounded_rectangle(frame_bbox, radius=int(12 * UPSCALE_FACTOR), outline=frame_color, width=int(frame_width * UPSCALE_FACTOR))
+        else:
+            composed = background_img
 
         filename = f"book_{book_id}_route.png"
         output_path = MAP_OUTPUT_DIR / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        final_img = img.resize((width, height), resample=Image.LANCZOS)
+        final_img = composed.resize((width, height), resample=Image.LANCZOS)
         final_img.save(output_path, format="PNG")
 
         rel_path = str(output_path.relative_to(DATA_DIR))
