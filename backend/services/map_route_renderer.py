@@ -1,12 +1,17 @@
 """
-Schematic route map renderer using pure Pillow.
+Route map renderer using Pillow (schematic).
 
-Generates a simple offline PNG showing the route polyline without external tile servers.
+Generates a static PNG for map route pages.
+Focuses on the dominant trip cluster and exaggerates skinny routes.
 """
+import os
+import math
 from pathlib import Path
+from statistics import median
 from typing import List, Tuple
 
 from PIL import Image, ImageDraw
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -17,80 +22,10 @@ MAP_OUTPUT_DIR = DATA_DIR / "maps"
 # Ensure directories exist
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Image dimensions and margins
-IMG_WIDTH = 1600
-IMG_HEIGHT = 1000
-MARGIN_X = 80
-MARGIN_Y = 60
-
-# Colors
-COLOR_BACKGROUND = (255, 255, 255)
-COLOR_ROUTE = (0, 150, 136)  # Teal
-COLOR_START = (76, 175, 80)  # Green
-COLOR_END = (244, 67, 54)    # Red
-COLOR_BORDER = (200, 200, 200)  # Light gray
-
-
-def _compute_padded_bbox(points: List[Tuple[float, float]], padding_ratio: float = 0.1) -> Tuple[float, float, float, float]:
-    """
-    Compute a padded bounding box for the given lat/lon points.
-    
-    Returns (min_lat, max_lat, min_lon, max_lon) with padding applied.
-    """
-    lats = [p[0] for p in points]
-    lons = [p[1] for p in points]
-    
-    min_lat, max_lat = min(lats), max(lats)
-    min_lon, max_lon = min(lons), max(lons)
-    
-    lat_range = max_lat - min_lat
-    lon_range = max_lon - min_lon
-    
-    # Handle case where all points are the same (single location)
-    if lat_range == 0:
-        lat_range = 0.01
-    if lon_range == 0:
-        lon_range = 0.01
-    
-    padding_lat = lat_range * padding_ratio
-    padding_lon = lon_range * padding_ratio
-    
-    return (
-        min_lat - padding_lat,
-        max_lat + padding_lat,
-        min_lon - padding_lon,
-        max_lon + padding_lon,
-    )
-
-
-def _latlon_to_pixel(
-    lat: float, lon: float,
-    bbox: Tuple[float, float, float, float],
-    img_width: int, img_height: int,
-    margin_x: int, margin_y: int
-) -> Tuple[int, int]:
-    """
-    Map lat/lon to pixel coordinates within the image area (inside margins).
-    """
-    min_lat, max_lat, min_lon, max_lon = bbox
-    
-    drawable_width = img_width - 2 * margin_x
-    drawable_height = img_height - 2 * margin_y
-    
-    # Normalize to 0-1 range
-    norm_x = (lon - min_lon) / (max_lon - min_lon)
-    norm_y = (lat - min_lat) / (max_lat - min_lat)
-    
-    # Convert to pixel coords (flip Y since image origin is top-left)
-    px = margin_x + int(norm_x * drawable_width)
-    py = margin_y + int((1 - norm_y) * drawable_height)
-    
-    return (px, py)
-
 
 def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[str, str]:
     """
-    Render a schematic PNG map for the given route points using pure Pillow.
+    Render a static PNG map for the given route points.
 
     Args:
         book_id: Book identifier (used for filename)
@@ -103,65 +38,186 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
     if len(points) < 2:
         return "", ""
 
-    print(f"[MAP] Starting schematic route render for book {book_id} with {len(points)} points")
+    print(f"[MAP] Starting render for book {book_id}: {len(points)} raw points")
+
+    # Preserve original ordering
+    indexed_points = [(idx, lat, lon) for idx, (lat, lon) in enumerate(points)]
 
     try:
-        # Compute bounding box
-        bbox = _compute_padded_bbox(points)
-        min_lat, max_lat, min_lon, max_lon = bbox
-        print(f"[MAP] Computed bbox: lat [{min_lat:.4f}, {max_lat:.4f}], lon [{min_lon:.4f}, {max_lon:.4f}]")
+        clusters = _cluster_points(indexed_points, radius_km=40.0)
+        main_cluster = _select_dominant_cluster(clusters, len(indexed_points))
+        cluster_points = _filter_points_in_cluster(indexed_points, main_cluster)
+        ignored_by_cluster = len(points) - len(cluster_points)
 
-        # Create image with white background
-        img = Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), COLOR_BACKGROUND)
+        if len(cluster_points) < 2:
+            final_points = [(lat, lon) for _, lat, lon in indexed_points]
+        else:
+            center_lat = sum(lat for lat, _ in cluster_points) / len(cluster_points)
+            center_lon = sum(lon for _, lon in cluster_points) / len(cluster_points)
+
+            distances = [
+                _haversine_km(lat, lon, center_lat, center_lon) for lat, lon in cluster_points
+            ]
+            median_distance_km = median(distances)
+            max_core_distance_km = max(5.0, 3 * median_distance_km)
+
+            trimmed_points = [
+                (lat, lon)
+                for (lat, lon), dist in zip(cluster_points, distances)
+                if dist <= max_core_distance_km
+            ]
+
+            if len(trimmed_points) < 2:
+                final_points = cluster_points
+            else:
+                final_points = trimmed_points
+
+        if ignored_by_cluster > 0:
+            print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; ignored {ignored_by_cluster} far-off points for rendering")
+        else:
+            print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; no points ignored")
+
+        bbox = _compute_bbox(final_points)
+        print(
+            f"[MAP] BBox lat({bbox['min_lat']:.4f},{bbox['max_lat']:.4f}) "
+            f"lon({bbox['min_lon']:.4f},{bbox['max_lon']:.4f}) "
+            f"span_lat={bbox['span_lat']:.4f} span_lon={bbox['span_lon']:.4f}"
+        )
+
+        # Render schematic map with Pillow
+        width, height = 1600, 1000
+        img = Image.new("RGB", (width, height), color="#f6f8fa")
         draw = ImageDraw.Draw(img)
 
-        # Draw light border
-        draw.rectangle(
-            [MARGIN_X - 2, MARGIN_Y - 2, IMG_WIDTH - MARGIN_X + 2, IMG_HEIGHT - MARGIN_Y + 2],
-            outline=COLOR_BORDER,
-            width=2
-        )
-
-        # Convert all points to pixel coordinates
-        pixel_points = [
-            _latlon_to_pixel(lat, lon, bbox, IMG_WIDTH, IMG_HEIGHT, MARGIN_X, MARGIN_Y)
-            for lat, lon in points
+        # Map points to canvas
+        coords = [
+            _latlon_to_xy(lat, lon, bbox, width, height)
+            for lat, lon in final_points
         ]
 
-        # Draw route polyline
-        if len(pixel_points) >= 2:
-            draw.line(pixel_points, fill=COLOR_ROUTE, width=4)
-
-        # Draw start marker (green circle)
-        start_px, start_py = pixel_points[0]
-        draw.ellipse(
-            [start_px - 10, start_py - 10, start_px + 10, start_py + 10],
-            fill=COLOR_START,
-            outline=(255, 255, 255),
-            width=2
+        print(
+            f"[MAP] Drawing {len(final_points)} core points "
+            f"(ignored {len(cluster_points) - len(final_points)} edge points)"
         )
 
-        # Draw end marker (red circle)
-        end_px, end_py = pixel_points[-1]
-        draw.ellipse(
-            [end_px - 10, end_py - 10, end_px + 10, end_py + 10],
-            fill=COLOR_END,
-            outline=(255, 255, 255),
-            width=2
-        )
+        if len(coords) >= 2:
+            draw.line(coords, fill="#2e8bc0", width=6, joint="curve")
 
-        # Save the image
+            # Start / end markers
+            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline="#1f7a4d")
+            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline="#b22234")
+
         filename = f"book_{book_id}_route.png"
         output_path = MAP_OUTPUT_DIR / filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         img.save(output_path, format="PNG")
 
         rel_path = str(output_path.relative_to(DATA_DIR))
         abs_path = str(output_path.resolve())
-
-        print(f"[MAP] Rendered schematic route map for book {book_id} with {len(points)} points -> {output_path}")
-
+        print(f"[MAP] Rendered map for book {book_id} to {rel_path}")
         return rel_path, abs_path
-
     except Exception as e:
-        print(f"[MAP] Failed to render schematic route map for book {book_id}: {e}")
+        print(f"[map_route_renderer] Failed to render route map for book {book_id}: {e}")
         return "", ""
+
+
+# ============================================================
+# Helpers for clustering and layout
+# ============================================================
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute distance in kilometers between two lat/lon points."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def _cluster_points(indexed_points: List[Tuple[int, float, float]], radius_km: float = 40.0) -> List[List[Tuple[int, float, float]]]:
+    """Greedy clustering based on first point in cluster as representative."""
+    clusters: List[List[Tuple[int, float, float]]] = []
+    for pt in indexed_points:
+        _, lat, lon = pt
+        placed = False
+        for cluster in clusters:
+            _, c_lat, c_lon = cluster[0]
+            if _haversine_km(lat, lon, c_lat, c_lon) <= radius_km:
+                cluster.append(pt)
+                placed = True
+                break
+        if not placed:
+            clusters.append([pt])
+    return clusters
+
+
+def _select_dominant_cluster(clusters: List[List[Tuple[int, float, float]]], total_points: int) -> List[Tuple[int, float, float]]:
+    """Pick the largest cluster; if all are size 1, fallback to all points."""
+    if not clusters:
+        return []
+    main = max(clusters, key=len)
+    if len(main) <= 1 and total_points > 1:
+        combined: List[Tuple[int, float, float]] = []
+        for cluster in clusters:
+            combined.extend(cluster)
+        return combined
+    return main
+
+
+def _filter_points_in_cluster(indexed_points: List[Tuple[int, float, float]], cluster: List[Tuple[int, float, float]]) -> List[Tuple[float, float]]:
+    """Return ordered (lat, lon) for points belonging to the chosen cluster."""
+    cluster_ids = {idx for idx, _, _ in cluster}
+    return [(lat, lon) for idx, lat, lon in indexed_points if idx in cluster_ids]
+
+
+def _compute_bbox(points: List[Tuple[float, float]], padding_ratio: float = 0.15, min_span_deg: float = 0.01) -> dict:
+    """Compute padded bbox with span exaggeration for skinny routes."""
+    lats = [lat for lat, _ in points]
+    lons = [lon for _, lon in points]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    span_lat = max(max_lat - min_lat, min_span_deg)
+    span_lon = max(max_lon - min_lon, min_span_deg)
+
+    # Exaggerate smaller span if very skinny (<30% of the larger span)
+    max_span = max(span_lat, span_lon)
+    min_span = min(span_lat, span_lon)
+    if min_span / max_span < 0.3:
+        if span_lat < span_lon:
+            span_lat = max_span * 0.3
+        else:
+            span_lon = max_span * 0.3
+
+    lat_pad = span_lat * padding_ratio
+    lon_pad = span_lon * padding_ratio
+
+    return {
+        "min_lat": min_lat - lat_pad,
+        "max_lat": max_lat + lat_pad,
+        "min_lon": min_lon - lon_pad,
+        "max_lon": max_lon + lon_pad,
+        "span_lat": span_lat,
+        "span_lon": span_lon,
+    }
+
+
+def _latlon_to_xy(lat: float, lon: float, bbox: dict, width: int, height: int) -> Tuple[float, float]:
+    """Map lat/lon to canvas coordinates using the padded bbox."""
+    # Invert latitude for y (north at top)
+    x = (lon - bbox["min_lon"]) / max(bbox["span_lon"], 1e-9)
+    y = (bbox["max_lat"] - lat) / max(bbox["span_lat"], 1e-9)
+    return x * width, y * height
+
+
+def _draw_marker(draw: ImageDraw.ImageDraw, center: Tuple[float, float], radius: int, fill: str, outline: str) -> None:
+    """Draw a circular marker."""
+    x, y = center
+    bbox = (x - radius, y - radius, x + radius, y + radius)
+    draw.ellipse(bbox, fill=fill, outline=outline, width=2)
