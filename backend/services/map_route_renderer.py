@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+UPSCALE_FACTOR = 3
 
 # Directories
 DATA_DIR = BASE_DIR / "data"
@@ -116,18 +117,28 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         start_color = (64, 224, 208, 255)  # turquoise
         end_color = (244, 114, 182, 255)  # coral/pink
         marker_outline = (255, 255, 255, 60)
-        route_color = "#2e8bc0"
         margin_px = 90
         coords = _map_points_to_canvas(simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9)
+        smoothed_coords = _smooth_polyline(
+            coords,
+            min_total_points=250,
+            max_segment_spacing_px=5.0,
+        )
 
-        img = Image.new("RGBA", (width, height), color=bg_color)
+        draw_width, draw_height = width * UPSCALE_FACTOR, height * UPSCALE_FACTOR
+        coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
+        smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
+
+        img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
         draw = ImageDraw.Draw(img, "RGBA")
 
         # Subtle grid texture
-        for x in range(0, width + 1, grid_spacing):
-            draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
-        for y in range(0, height + 1, grid_spacing):
-            draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+        grid_step = int(grid_spacing * UPSCALE_FACTOR)
+        grid_line_width = max(1, int(1 * UPSCALE_FACTOR / 2))
+        for x in range(0, draw_width + 1, grid_step):
+            draw.line([(x, 0), (x, draw_height)], fill=grid_color, width=grid_line_width)
+        for y in range(0, draw_height + 1, grid_step):
+            draw.line([(0, y), (draw_width, y)], fill=grid_color, width=grid_line_width)
 
         if coords and DEBUG_MAP_RENDERING:
             xs, ys = zip(*coords)
@@ -144,41 +155,41 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
 
         if len(coords) >= 2:
             if DEBUG_MAP_RENDERING:
-                safe_box = (margin_px, margin_px, width - margin_px, height - margin_px)
-                draw.rectangle(safe_box, outline="#d0d7de", width=2)
+                safe_box = (
+                    margin_px * UPSCALE_FACTOR,
+                    margin_px * UPSCALE_FACTOR,
+                    draw_width - margin_px * UPSCALE_FACTOR,
+                    draw_height - margin_px * UPSCALE_FACTOR,
+                )
+                draw.rectangle(safe_box, outline="#d0d7de", width=max(1, int(2 * UPSCALE_FACTOR)))
 
             # Halo
-            draw.line(coords, fill=halo_color, width=halo_width, joint="curve")
+            draw.line(smoothed_scaled, fill=halo_color, width=int(halo_width * UPSCALE_FACTOR), joint="curve")
 
             # Gradient core line
-            _draw_gradient_polyline(draw, coords, start_color, end_color, width=route_width)
-
-            # Light smoothing at joints to soften corners
-            joint_radius = max(route_width // 2 + 1, route_width // 2)
-            for x, y in coords:
-                bbox_joint = (x - joint_radius, y - joint_radius, x + joint_radius, y + joint_radius)
-                draw.ellipse(bbox_joint, fill=route_color, outline=route_color)
+            _draw_gradient_polyline(draw, smoothed_scaled, start_color, end_color, width=int(route_width * UPSCALE_FACTOR))
 
             # Start / end markers
-            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline=marker_outline)
-            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline=marker_outline)
+            _draw_marker(draw, coords_scaled[0], radius=int(10 * UPSCALE_FACTOR), fill="#3cb371", outline=marker_outline)
+            _draw_marker(draw, coords_scaled[-1], radius=int(10 * UPSCALE_FACTOR), fill="#e63946", outline=marker_outline)
 
-            _draw_legend(draw, width, height, start_color, end_color, marker_outline)
+            _draw_legend(draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
 
         # Outer frame
-        frame_margin = 8
+        frame_margin = int(8 * UPSCALE_FACTOR)
         frame_bbox = (
             frame_margin,
             frame_margin,
-            width - frame_margin,
-            height - frame_margin,
+            draw_width - frame_margin,
+            draw_height - frame_margin,
         )
-        draw.rounded_rectangle(frame_bbox, radius=12, outline=frame_color, width=frame_width)
+        draw.rounded_rectangle(frame_bbox, radius=int(12 * UPSCALE_FACTOR), outline=frame_color, width=int(frame_width * UPSCALE_FACTOR))
 
         filename = f"book_{book_id}_route.png"
         output_path = MAP_OUTPUT_DIR / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(output_path, format="PNG")
+        final_img = img.resize((width, height), resample=Image.LANCZOS)
+        final_img.save(output_path, format="PNG")
 
         rel_path = str(output_path.relative_to(DATA_DIR))
         abs_path = str(output_path.resolve())
@@ -363,7 +374,8 @@ def _draw_marker(draw: ImageDraw.ImageDraw, center: Tuple[float, float], radius:
     """Draw a circular marker."""
     x, y = center
     bbox = (x - radius, y - radius, x + radius, y + radius)
-    draw.ellipse(bbox, fill=fill, outline=outline, width=2)
+    stroke_width = max(1, int(2 * UPSCALE_FACTOR))
+    draw.ellipse(bbox, fill=fill, outline=outline, width=stroke_width)
 
 
 def _draw_gradient_polyline(
@@ -412,29 +424,95 @@ def _draw_legend(
     start_color: Tuple[int, int, int, int],
     end_color: Tuple[int, int, int, int],
     outline_color: Tuple[int, int, int, int],
+    scale: float = UPSCALE_FACTOR,
 ) -> None:
     """Draw a small legend in the top-right corner."""
-    padding = 20
-    line_len = 70
-    line_gap = 18
-    radius = 5
-    font = ImageFont.load_default()
+    padding = int(20 * scale)
+    line_len = int(70 * scale)
+    line_gap = int(18 * scale)
+    radius = int(5 * scale)
+    text_offset = int(8 * scale)
+    text_y_offset = int(6 * scale)
+    line_width = max(2, int(5 * scale))
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", int(12 * scale))
+    except Exception:
+        font = ImageFont.load_default()
 
     x0 = width - padding - line_len
     y0 = padding
 
     # Start
     start_line = [(x0, y0), (x0 + line_len, y0)]
-    draw.line(start_line, fill=start_color, width=5)
+    draw.line(start_line, fill=start_color, width=line_width)
     _draw_marker(draw, start_line[0], radius=radius, fill="#3cb371", outline=outline_color)
-    draw.text((x0 + line_len + 8, y0 - 6), "Start", fill="#d9e2ec", font=font)
+    draw.text((x0 + line_len + text_offset, y0 - text_y_offset), "Start", fill="#d9e2ec", font=font)
 
     # End
     y1 = y0 + line_gap
     end_line = [(x0, y1), (x0 + line_len, y1)]
-    draw.line(end_line, fill=end_color, width=5)
+    draw.line(end_line, fill=end_color, width=line_width)
     _draw_marker(draw, end_line[1], radius=radius, fill="#e63946", outline=outline_color)
-    draw.text((x0 + line_len + 8, y1 - 6), "End", fill="#d9e2ec", font=font)
+    draw.text((x0 + line_len + text_offset, y1 - text_y_offset), "End", fill="#d9e2ec", font=font)
+
+
+def _smooth_polyline(
+    points: List[Tuple[float, float]],
+    min_total_points: int = 200,
+    max_segment_spacing_px: float = 5.0,
+) -> List[Tuple[float, float]]:
+    """Generate a smoothed polyline using Catmull-Rom interpolation with dense sampling."""
+    if len(points) < 4:
+        return points
+
+    base_lengths = []
+    total_base = 0.0
+    for i in range(1, len(points)):
+        seg_len = math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
+        base_lengths.append(seg_len)
+        total_base += seg_len
+
+    if total_base <= 1e-6:
+        return points
+
+    samples_per_segment = [
+        max(2, math.ceil(seg_len / max_segment_spacing_px)) for seg_len in base_lengths
+    ]
+    total_samples = sum(samples_per_segment)
+    if total_samples < min_total_points:
+        scale = math.ceil(min_total_points / max(total_samples, 1))
+        samples_per_segment = [max(2, s * scale) for s in samples_per_segment]
+
+    smoothed: List[Tuple[float, float]] = []
+    extended = [points[0]] + points + [points[-1]]
+
+    def catmull_rom(p0, p1, p2, p3, t: float) -> Tuple[float, float]:
+        t2 = t * t
+        t3 = t2 * t
+        x = 0.5 * (
+            (2 * p1[0])
+            + (-p0[0] + p2[0]) * t
+            + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+            + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
+        )
+        y = 0.5 * (
+            (2 * p1[1])
+            + (-p0[1] + p2[1]) * t
+            + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+            + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+        )
+        return x, y
+
+    smoothed.append(points[0])
+    for i in range(1, len(extended) - 2):
+        p0, p1, p2, p3 = extended[i - 1], extended[i], extended[i + 1], extended[i + 2]
+        seg_idx = min(i - 1, len(samples_per_segment) - 1)
+        samples = samples_per_segment[seg_idx]
+        for j in range(1, samples + 1):
+            t = j / float(samples)
+            smoothed.append(catmull_rom(p0, p1, p2, p3, t))
+
+    return smoothed
 
 
 def debug_render_synthetic_routes(output_dir: Path) -> None:
@@ -478,10 +556,14 @@ def debug_render_synthetic_routes(output_dir: Path) -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     width, height = 1600, 1000
-    route_width = 6
-    route_color = "#2e8bc0"
+    route_width = 7
     margin_px = 90
     shrink_factor = 0.9
+    halo_width = 16
+    halo_color = (46, 139, 192, 70)
+    start_color = (64, 224, 208, 255)
+    end_color = (244, 114, 182, 255)
+    marker_outline = (255, 255, 255, 60)
 
     for name, pts in routes.items():
         if len(pts) < 2:
@@ -490,6 +572,10 @@ def debug_render_synthetic_routes(output_dir: Path) -> None:
         simplified = simplify_route(pts, max_points=25, min_distance_km=0.1)
         bbox = _compute_bbox(simplified)
         coords = _map_points_to_canvas(simplified, width, height, margin_px=margin_px, shrink_factor=shrink_factor)
+        smoothed_coords = _smooth_polyline(coords, min_total_points=250, max_segment_spacing_px=5.0)
+        coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
+        smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
+        draw_width, draw_height = width * UPSCALE_FACTOR, height * UPSCALE_FACTOR
 
         print(f"[MAP][DEBUG] Synthetic '{name}' simplified to {len(simplified)} pts; bbox lat({bbox['min_lat']:.4f},{bbox['max_lat']:.4f}) lon({bbox['min_lon']:.4f},{bbox['max_lon']:.4f})")
         if coords and DEBUG_MAP_RENDERING:
@@ -505,24 +591,27 @@ def debug_render_synthetic_routes(output_dir: Path) -> None:
                 f"points={len(coords)}"
             )
 
-        img = Image.new("RGB", (width, height), color="#f6f8fa")
-        draw = ImageDraw.Draw(img)
+        img = Image.new("RGBA", (draw_width, draw_height), color="#050910")
+        draw = ImageDraw.Draw(img, "RGBA")
 
         if coords and len(coords) >= 2:
             if DEBUG_MAP_RENDERING:
-                safe_box = (margin_px, margin_px, width - margin_px, height - margin_px)
-                draw.rectangle(safe_box, outline="#d0d7de", width=2)
+                safe_box = (
+                    margin_px * UPSCALE_FACTOR,
+                    margin_px * UPSCALE_FACTOR,
+                    draw_width - margin_px * UPSCALE_FACTOR,
+                    draw_height - margin_px * UPSCALE_FACTOR,
+                )
+                draw.rectangle(safe_box, outline="#d0d7de", width=max(1, int(2 * UPSCALE_FACTOR)))
 
-            draw.line(coords, fill=route_color, width=route_width, joint="curve")
+            draw.line(smoothed_scaled, fill=halo_color, width=int(halo_width * UPSCALE_FACTOR), joint="curve")
+            _draw_gradient_polyline(draw, smoothed_scaled, start_color, end_color, width=int(route_width * UPSCALE_FACTOR))
 
-            joint_radius = max(route_width // 2 + 1, route_width // 2)
-            for x, y in coords:
-                bbox_joint = (x - joint_radius, y - joint_radius, x + joint_radius, y + joint_radius)
-                draw.ellipse(bbox_joint, fill=route_color, outline=route_color)
-
-            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline="#3cb371")
-            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline="#e63946")
+            _draw_marker(draw, coords_scaled[0], radius=int(10 * UPSCALE_FACTOR), fill="#3cb371", outline=marker_outline)
+            _draw_marker(draw, coords_scaled[-1], radius=int(10 * UPSCALE_FACTOR), fill="#e63946", outline=marker_outline)
+            _draw_legend(draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
 
         out_path = output_dir / f"synthetic_{name}.png"
-        img.save(out_path, format="PNG")
+        final_img = img.resize((width, height), resample=Image.LANCZOS)
+        final_img.save(out_path, format="PNG")
         print(f"[MAP][DEBUG] Saved synthetic route '{name}' to {out_path}")
