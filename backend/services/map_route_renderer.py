@@ -24,7 +24,8 @@ DEBUG_MAP_RENDERING = True
 # Ensure directories exist
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-
+# TODO(map-v2): explore further smoothing/anti-aliasing for extreme zoom levels,
+# or switching to an SVG/vector-based route renderer if we ever need ultra-high DPI.
 def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[str, str]:
     """
     Render a static PNG map for the given route points.
