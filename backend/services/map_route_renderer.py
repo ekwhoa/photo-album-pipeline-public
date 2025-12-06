@@ -10,7 +10,7 @@ from pathlib import Path
 from statistics import median
 from typing import List, Tuple
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -105,6 +105,30 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
             f"(ignored {len(cluster_points) - len(core_points)} edge points)"
         )
 
+        bg_color = "#050910"
+        grid_color = (40, 48, 58, 35)
+        grid_spacing = 100
+        frame_color = "#0f1724"
+        frame_width = 3
+        halo_color = (46, 139, 192, 70)
+        halo_width = 16
+        route_width = 7
+        start_color = (64, 224, 208, 255)  # turquoise
+        end_color = (244, 114, 182, 255)  # coral/pink
+        marker_outline = (255, 255, 255, 60)
+        route_color = "#2e8bc0"
+        margin_px = 90
+        coords = _map_points_to_canvas(simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9)
+
+        img = Image.new("RGBA", (width, height), color=bg_color)
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        # Subtle grid texture
+        for x in range(0, width + 1, grid_spacing):
+            draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+        for y in range(0, height + 1, grid_spacing):
+            draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+
         if coords and DEBUG_MAP_RENDERING:
             xs, ys = zip(*coords)
             min_x, max_x = min(xs), max(xs)
@@ -123,7 +147,11 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
                 safe_box = (margin_px, margin_px, width - margin_px, height - margin_px)
                 draw.rectangle(safe_box, outline="#d0d7de", width=2)
 
-            draw.line(coords, fill=route_color, width=route_width, joint="curve")
+            # Halo
+            draw.line(coords, fill=halo_color, width=halo_width, joint="curve")
+
+            # Gradient core line
+            _draw_gradient_polyline(draw, coords, start_color, end_color, width=route_width)
 
             # Light smoothing at joints to soften corners
             joint_radius = max(route_width // 2 + 1, route_width // 2)
@@ -132,8 +160,20 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
                 draw.ellipse(bbox_joint, fill=route_color, outline=route_color)
 
             # Start / end markers
-            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline="#3cb371")
-            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline="#e63946")
+            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline=marker_outline)
+            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline=marker_outline)
+
+            _draw_legend(draw, width, height, start_color, end_color, marker_outline)
+
+        # Outer frame
+        frame_margin = 8
+        frame_bbox = (
+            frame_margin,
+            frame_margin,
+            width - frame_margin,
+            height - frame_margin,
+        )
+        draw.rounded_rectangle(frame_bbox, radius=12, outline=frame_color, width=frame_width)
 
         filename = f"book_{book_id}_route.png"
         output_path = MAP_OUTPUT_DIR / filename
@@ -324,6 +364,77 @@ def _draw_marker(draw: ImageDraw.ImageDraw, center: Tuple[float, float], radius:
     x, y = center
     bbox = (x - radius, y - radius, x + radius, y + radius)
     draw.ellipse(bbox, fill=fill, outline=outline, width=2)
+
+
+def _draw_gradient_polyline(
+    draw: ImageDraw.ImageDraw,
+    coords: List[Tuple[float, float]],
+    start_color: Tuple[int, int, int, int],
+    end_color: Tuple[int, int, int, int],
+    width: int,
+) -> None:
+    """Draw a polyline with a start->end color gradient."""
+    if len(coords) < 2:
+        return
+
+    # Compute cumulative lengths for interpolation
+    lengths = [0.0]
+    total = 0.0
+    for i in range(1, len(coords)):
+        x1, y1 = coords[i - 1]
+        x2, y2 = coords[i]
+        seg = math.hypot(x2 - x1, y2 - y1)
+        total += seg
+        lengths.append(total)
+
+    if total <= 0:
+        return
+
+    for i in range(1, len(coords)):
+        t0 = lengths[i - 1] / total
+        t1 = lengths[i] / total
+        color_t = (t0 + t1) / 2
+        color = _interpolate_color(start_color, end_color, color_t)
+        draw.line([coords[i - 1], coords[i]], fill=color, width=width, joint="curve")
+
+
+def _interpolate_color(
+    start: Tuple[int, int, int, int], end: Tuple[int, int, int, int], t: float
+) -> Tuple[int, int, int, int]:
+    t = max(0.0, min(1.0, t))
+    return tuple(int(s + (e - s) * t) for s, e in zip(start, end))
+
+
+def _draw_legend(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    height: int,
+    start_color: Tuple[int, int, int, int],
+    end_color: Tuple[int, int, int, int],
+    outline_color: Tuple[int, int, int, int],
+) -> None:
+    """Draw a small legend in the top-right corner."""
+    padding = 20
+    line_len = 70
+    line_gap = 18
+    radius = 5
+    font = ImageFont.load_default()
+
+    x0 = width - padding - line_len
+    y0 = padding
+
+    # Start
+    start_line = [(x0, y0), (x0 + line_len, y0)]
+    draw.line(start_line, fill=start_color, width=5)
+    _draw_marker(draw, start_line[0], radius=radius, fill="#3cb371", outline=outline_color)
+    draw.text((x0 + line_len + 8, y0 - 6), "Start", fill="#d9e2ec", font=font)
+
+    # End
+    y1 = y0 + line_gap
+    end_line = [(x0, y1), (x0 + line_len, y1)]
+    draw.line(end_line, fill=end_color, width=5)
+    _draw_marker(draw, end_line[1], radius=radius, fill="#e63946", outline=outline_color)
+    draw.text((x0 + line_len + 8, y1 - 6), "End", fill="#d9e2ec", font=font)
 
 
 def debug_render_synthetic_routes(output_dir: Path) -> None:
