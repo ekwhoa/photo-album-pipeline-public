@@ -7,7 +7,7 @@ Uses HTML/CSS rendering via WeasyPrint for flexibility.
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
-from domain.models import Asset, Book, PageLayout, RenderContext, Theme
+from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
 
 
 def render_book_to_pdf(
@@ -147,6 +147,126 @@ def _generate_book_html(
 """
 
 
+def _render_map_route_card(
+    layout: PageLayout,
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+    media_root: str,
+    mode: str,
+    media_base_url: str | None,
+) -> str:
+    """Render the map route page as a centered card with title/subtitle."""
+    bg_color = layout.background_color or theme.background_color
+
+    image_src = ""
+    title = "Trip route"
+    stats_lines: List[str] = []
+
+    for elem in layout.elements:
+        if (elem.image_path or elem.image_url) and not image_src:
+            if mode == "pdf":
+                image_src = elem.image_path or ""
+            else:
+                image_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
+        elif elem.text:
+            # First text element is the title; others become subtitle lines
+            if title == "Trip route" and elem.text.lower().startswith("trip route"):
+                title = elem.text
+            else:
+                stats_lines.append(elem.text)
+
+    subtitle = " • ".join(stats_lines)
+
+    figure_html = ""
+    if image_src:
+        figure_html = f"""
+            <figure class="map-route-figure">
+                <img src="{image_src}" alt="Trip route map" />
+            </figure>
+        """
+    else:
+        figure_html = """
+            <div class="map-route-placeholder">Route image unavailable</div>
+        """
+
+    return f"""
+    <div class="page map-route-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {bg_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+    ">
+        <style>
+            .map-route-page {{
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+            }}
+            .map-route-card {{
+                max-width: 190mm;
+                width: 88%;
+                margin: 18mm auto 14mm;
+                padding: 14mm 12mm;
+                background: #f8fafc;
+                border: 1px solid #d9e2ec;
+                border-radius: 10px;
+                box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
+                display: flex;
+                flex-direction: column;
+                gap: 6mm;
+                align-items: center;
+                text-align: center;
+            }}
+            .map-route-title {{
+                font-family: {theme.title_font_family};
+                font-size: 24pt;
+                letter-spacing: 0.2pt;
+                margin: 0;
+                color: {theme.primary_color};
+            }}
+            .map-route-subtitle {{
+                font-size: 12pt;
+                color: {theme.secondary_color};
+                margin: 0;
+            }}
+            .map-route-figure {{
+                margin: 0;
+                width: 100%;
+                background: #0b111c;
+                border-radius: 8px;
+                border: 1px solid #cbd5e1;
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+                padding: 6mm;
+            }}
+            .map-route-figure img {{
+                width: 100%;
+                height: auto;
+                display: block;
+                border-radius: 6px;
+            }}
+            .map-route-placeholder {{
+                width: 100%;
+                padding: 30mm 10mm;
+                background: #e2e8f0;
+                color: #475569;
+                border-radius: 8px;
+                border: 1px dashed #cbd5e1;
+                font-size: 12pt;
+            }}
+        </style>
+        <div class="map-route-card">
+            <h1 class="map-route-title">{title}</h1>
+            <p class="map-route-subtitle">{subtitle}</p>
+            {figure_html}
+        </div>
+    </div>
+    """
+
+
 def _render_page_html(
     layout: PageLayout,
     assets: Dict[str, Asset],
@@ -158,6 +278,9 @@ def _render_page_html(
     media_base_url: str | None = None,
 ) -> str:
     """Render a single page to HTML."""
+    if layout.page_type == PageType.MAP_ROUTE:
+        return _render_map_route_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
+
     bg_color = layout.background_color or theme.background_color
     
     elements_html = []
