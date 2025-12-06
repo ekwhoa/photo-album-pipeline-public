@@ -74,7 +74,7 @@ export function BookCard({ book, onDelete, isDeleting }: BookCardProps) {
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </AlertDialogTrigger>
-              <AlertDialogContent onPointerDownOutside={(e) => e.preventDefault()}>
+              <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete book?</AlertDialogTitle>
                   <AlertDialogDescription>
