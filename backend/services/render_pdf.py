@@ -345,8 +345,8 @@ def _render_trip_summary_card(
             }}
             .trip-summary-stats {{
                 width: 100%;
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(40mm, 1fr));
+                display: flex;
+                flex-direction: column;
                 gap: 6mm;
             }}
             .stat-card {{
@@ -380,6 +380,144 @@ def _render_trip_summary_card(
     """
 
 
+def _render_photo_grid_card(
+    layout: PageLayout,
+    assets: Dict[str, Asset],
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+    media_root: str,
+    mode: str,
+    media_base_url: str | None,
+) -> str:
+    """Render photo grid pages with centered column and consistent gutters."""
+    bg_color = layout.background_color or theme.background_color
+
+    # Optional heading if provided in payload (e.g., day label)
+    heading = ""
+    for elem in layout.elements:
+        if elem.text and not heading:
+            heading = elem.text
+            break
+
+    # Build image cells
+    cell_divs: List[str] = []
+    for elem in layout.elements:
+        img_src = ""
+        if elem.image_path or elem.image_url:
+            if mode == "pdf":
+                candidate = elem.image_path or ""
+                if candidate:
+                    candidate_path = Path(candidate)
+                    if not candidate_path.is_absolute():
+                        candidate_path = Path(media_root) / candidate_path
+                    img_src = candidate_path.resolve().as_uri()
+            else:
+                img_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
+        elif elem.asset_id and elem.asset_id in assets:
+            asset = assets[elem.asset_id]
+            normalized_path = asset.file_path.replace("\\", "/")
+            if mode == "pdf":
+                candidate_path = Path(normalized_path)
+                if not candidate_path.is_absolute():
+                    candidate_path = Path(media_root) / candidate_path
+                img_src = candidate_path.resolve().as_uri()
+            else:
+                base = media_base_url.rstrip("/") if media_base_url else "/media"
+                img_src = f"{base}/{normalized_path}"
+
+        if not img_src:
+            continue
+
+        cell_divs.append(f"""
+            <div class="photo-cell">
+                <img src="{img_src}" alt="" />
+            </div>
+        """)
+
+    cells_html = "".join(cell_divs)
+
+    return f"""
+    <div class="page photo-grid-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {bg_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+    ">
+        <style>
+            .photo-grid-page {{
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+                box-sizing: border-box;
+                padding: 4mm 0;
+            }}
+            .photo-grid-card {{
+                max-width: 190mm;
+                width: 88%;
+                margin: 4mm auto;
+                padding: 6mm;
+                background: #f8fafc;
+                border: 1px solid #d9e2ec;
+                border-radius: 10px;
+                box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
+                display: flex;
+                flex-direction: column;
+                gap: 3mm;
+                box-sizing: border-box;
+                max-height: calc(100% - 8mm);
+                overflow: hidden;
+            }}
+            .photo-grid-heading {{
+                font-family: {theme.title_font_family};
+                font-size: 18pt;
+                color: {theme.primary_color};
+                margin: 0;
+                text-align: center;
+            }}
+            .photo-grid {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 3mm;
+                width: 100%;
+                justify-content: center;
+                box-sizing: border-box;
+                align-content: flex-start;
+                flex: 1 1 auto;
+            }}
+            .photo-cell {{
+                flex: 1 1 54mm;
+                max-width: calc(50% - 3mm);
+                padding-top: 52%;
+                position: relative;
+                border-radius: 8px;
+                overflow: hidden;
+                background: #e2e8f0;
+                box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+                box-sizing: border-box;
+            }}
+            .photo-cell img {{
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }}
+        </style>
+        <div class="photo-grid-card">
+            {f'<h2 class=\"photo-grid-heading\">{heading}</h2>' if heading else ''}
+            <div class="photo-grid">
+                {cells_html}
+            </div>
+        </div>
+    </div>
+    """
+
+
 def _render_page_html(
     layout: PageLayout,
     assets: Dict[str, Asset],
@@ -395,6 +533,8 @@ def _render_page_html(
         return _render_map_route_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.TRIP_SUMMARY:
         return _render_trip_summary_card(layout, theme, width_mm, height_mm)
+    if layout.page_type == PageType.PHOTO_GRID:
+        return _render_photo_grid_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
 
     bg_color = layout.background_color or theme.background_color
     

@@ -96,11 +96,11 @@ def layout_front_cover(page: Page, context: RenderContext) -> PageLayout:
     title = page.payload.get("title", "")
     elements.append(LayoutRect(
         x_mm=margin,
-        y_mm=height * 0.65,
+        y_mm=margin + 30,
         width_mm=width - 2 * margin,
-        height_mm=20,
+        height_mm=22,
         text=title,
-        font_size=24,
+        font_size=28,
         color=theme.cover_text_color,
     ))
     
@@ -109,13 +109,22 @@ def layout_front_cover(page: Page, context: RenderContext) -> PageLayout:
     if subtitle:
         elements.append(LayoutRect(
             x_mm=margin,
-            y_mm=height * 0.65 + 25,
+            y_mm=margin + 55,
             width_mm=width - 2 * margin,
-            height_mm=12,
+            height_mm=14,
             text=subtitle,
-            font_size=12,
+            font_size=14,
             color=theme.cover_text_color,
         ))
+    
+    # Accent rule
+    elements.append(LayoutRect(
+        x_mm=margin + 20,
+        y_mm=margin + 70,
+        width_mm=width - 2 * margin - 40,
+        height_mm=1,
+        color="rgba(255, 255, 255, 0.6)",
+    ))
     
     return PageLayout(
         page_index=page.index,
