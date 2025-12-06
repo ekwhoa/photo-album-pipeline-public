@@ -9,6 +9,7 @@ from datetime import date
 from domain.models import (
     Asset, Book, BookSize, Day, Page, PageType
 )
+from services.map_route_renderer import render_route_map
 
 
 # Configuration for photo grid layouts
@@ -79,13 +80,44 @@ def plan_book(
         assets=assets,
         index=1,
     )
+
+    # Map route page (optional, index 2)
+    gps_photo_count, distinct_locations = compute_gps_stats(assets)
+    asset_lookup = {a.id: a for a in assets}
+    route_points = []
+    for asset_id in all_asset_ids:
+        asset = asset_lookup.get(asset_id)
+        if asset and asset.metadata and asset.metadata.gps_lat is not None and asset.metadata.gps_lon is not None:
+            route_points.append((asset.metadata.gps_lat, asset.metadata.gps_lon))
+    map_route_page: Optional[Page] = None
+    interior_start_index = 2
+    route_image_rel = ""
+    route_image_abs = ""
+    if gps_photo_count > 0 and route_points:
+        route_image_rel, route_image_abs = render_route_map(book_id, route_points)
+
+    if gps_photo_count > 0:
+        map_route_page = Page(
+            index=2,
+            page_type=PageType.MAP_ROUTE,
+            payload={
+                "gps_photo_count": gps_photo_count,
+                "distinct_locations": distinct_locations,
+                "route_image_path": route_image_rel,
+                "route_image_abs_path": route_image_abs,
+            },
+        )
+        interior_start_index = 3
     
-    # Create interior photo grid pages (starting at index 2)
+    # Create interior photo grid pages
     photos_per_page = PHOTOS_PER_PAGE.get(size.value, 4)
-    interior_pages = _create_photo_grid_pages(all_asset_ids, photos_per_page, start_index=2)
+    interior_pages = _create_photo_grid_pages(all_asset_ids, photos_per_page, start_index=interior_start_index)
     
-    # Combine trip summary + photo grids
-    all_interior_pages = [trip_summary] + interior_pages
+    # Combine trip summary + optional map route + photo grids
+    all_interior_pages = [trip_summary]
+    if map_route_page:
+        all_interior_pages.append(map_route_page)
+    all_interior_pages.extend(interior_pages)
     
     # Create back cover (last page)
     back_cover = Page(
@@ -160,6 +192,28 @@ def compute_exif_date_range(assets: List[Asset]) -> Tuple[Optional[date], Option
         subtitle = f"{start.strftime('%B %Y')} - {end.strftime('%B %Y')}"
     
     return start, end, subtitle
+
+
+def compute_gps_stats(assets: List[Asset]) -> Tuple[int, int]:
+    """
+    Compute GPS-related stats from assets.
+    
+    Returns:
+        (gps_photo_count, distinct_locations)
+        distinct_locations is based on rounded lat/lon pairs to approximate unique spots.
+    """
+    gps_assets = [
+        (a.metadata.gps_lat, a.metadata.gps_lon)
+        for a in assets
+        if a.metadata and a.metadata.gps_lat is not None and a.metadata.gps_lon is not None
+    ]
+    gps_photo_count = len(gps_assets)
+    distinct_set = set()
+    for lat, lon in gps_assets:
+        # Round to 3 decimal places (~100m) for uniqueness approximation
+        rounded = (round(lat, 3), round(lon, 3))
+        distinct_set.add(rounded)
+    return gps_photo_count, len(distinct_set)
 
 
 def _create_trip_summary_page(

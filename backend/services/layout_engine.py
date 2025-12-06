@@ -278,8 +278,66 @@ def layout_back_cover(page: Page, context: RenderContext) -> PageLayout:
 
 @register_layout(PageType.MAP_ROUTE)
 def layout_map_route(page: Page, context: RenderContext) -> PageLayout:
-    """Placeholder for map route page layout."""
-    raise NotImplementedError("Map route layout not yet implemented")
+    """Text-only layout for map route stats."""
+    theme = context.theme
+    width = context.page_width_mm
+    height = context.page_height_mm
+    margin = theme.page_margin_mm
+
+    gps_photo_count = page.payload.get("gps_photo_count") or 0
+    distinct_locations = page.payload.get("distinct_locations") or 0
+    route_image_path = page.payload.get("route_image_abs_path") or ""
+    route_image_url = page.payload.get("route_image_path") or ""
+
+    elements = []
+
+    # Title
+    elements.append(LayoutRect(
+        x_mm=margin,
+        y_mm=margin + 15,
+        width_mm=width - 2 * margin,
+        height_mm=20,
+        text="Trip Route",
+        font_size=26,
+        color=theme.primary_color,
+    ))
+
+    # Image area if available
+    if route_image_path or route_image_url:
+        elements.append(LayoutRect(
+            x_mm=margin,
+            y_mm=margin + 40,
+            width_mm=width - 2 * margin,
+            height_mm=height * 0.55,
+            image_path=route_image_path,
+            image_url=f"/static/{route_image_url}" if route_image_url else None,
+        ))
+
+    # Summary lines
+    summary_lines = [
+        f"Photos with location: {gps_photo_count}",
+        f"Approximate unique spots: {distinct_locations}",
+    ]
+
+    start_y = (margin + 40 + height * 0.55 + 10) if (route_image_path or route_image_url) else (margin + 55)
+    line_height = 14
+    for i, line in enumerate(summary_lines):
+        elements.append(LayoutRect(
+            x_mm=margin,
+            y_mm=start_y + i * (line_height + 4),
+            width_mm=width - 2 * margin,
+            height_mm=line_height,
+            text=line,
+            font_size=14,
+            color=theme.secondary_color,
+        ))
+
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=theme.background_color,
+        elements=elements,
+    )
 
 
 @register_layout(PageType.SPOTLIGHT)

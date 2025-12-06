@@ -162,7 +162,29 @@ def _render_page_html(
     
     elements_html = []
     for elem in layout.elements:
-        if elem.asset_id and elem.asset_id in assets:
+        if elem.image_path or elem.image_url:
+            if mode == "pdf":
+                img_path = elem.image_path or ""
+            else:
+                img_path = _resolve_web_image_url(elem.image_url or "", media_base_url)
+            if img_path:
+                elements_html.append(f"""
+                    <div style="
+                        position: absolute;
+                        left: {elem.x_mm}mm;
+                        top: {elem.y_mm}mm;
+                        width: {elem.width_mm}mm;
+                        height: {elem.height_mm}mm;
+                        overflow: hidden;
+                    ">
+                        <img src="{img_path}" style="
+                            width: 100%;
+                            height: 100%;
+                            object-fit: cover;
+                        " />
+                    </div>
+                """)
+        elif elem.asset_id and elem.asset_id in assets:
             asset = assets[elem.asset_id]
             # Path handling based on render mode
             normalized_path = asset.file_path.replace("\\", "/")
@@ -235,6 +257,32 @@ def _render_page_html(
             {''.join(elements_html)}
         </div>
     """
+
+
+def _resolve_web_image_url(raw_path: str, media_base_url: str | None) -> str:
+    """
+    Ensure image URLs inside srcDoc HTML point to the backend origin.
+
+    Args:
+        raw_path: Path stored in the layout (may be /static/... or relative)
+        media_base_url: Absolute base URL to /media (e.g., http://localhost:8000/media)
+    """
+    if not raw_path:
+        return ""
+    if raw_path.startswith(("http://", "https://", "data:")):
+        return raw_path
+
+    origin = ""
+    if media_base_url:
+        if "/media" in media_base_url:
+            origin = media_base_url.split("/media")[0].rstrip("/")
+        else:
+            origin = media_base_url.rstrip("/")
+
+    if raw_path.startswith("/"):
+        return f"{origin}{raw_path}" if origin else raw_path
+
+    return f"{origin}/{raw_path}" if origin else raw_path
 
 
 def _generate_print_css(context: RenderContext) -> str:

@@ -46,9 +46,10 @@ __pycache__/
 # Logs
 *.log
 
-# Media generated at runtime (photos, thumbnails, exports)
+# Media generated at runtime (photos, thumbnails, exports, maps, etc)
 media/
 backend/media/
+backend/data/
 
 # Node / frontend (if you install locally)
 node_modules/
@@ -63,5 +64,4 @@ backend/.venv/
 backend/**/__pycache__/
 backend/**/*.py[cod]
 
-# Backend media (uploaded photos, thumbnails, exports)
-backend/media/
+

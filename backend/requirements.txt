@@ -16,5 +16,11 @@ weasyprint>=60.0  # HTML/CSS to PDF - requires system dependencies
 sqlalchemy>=2.0.0
 # alembic>=1.12.0
 
+# Map rendering
+staticmap==0.5.5
+
+# Env loading
+python-dotenv>=1.0.0
+
 # Future: S3 storage
 # boto3>=1.28.0

@@ -164,6 +164,13 @@ async def get_pages(book_id: str):
                 day_count = page.payload.get("day_count", 0)
                 photo_count = page.payload.get("photo_count", 0)
                 summary = f"Trip overview: {day_count} days, {photo_count} photos"
+            elif page.page_type.value == "map_route":
+                gps_photo_count = page.payload.get("gps_photo_count")
+                distinct_locations = page.payload.get("distinct_locations")
+                if gps_photo_count is not None and distinct_locations is not None:
+                    summary = f"Map route: {gps_photo_count} photos with location across ~{distinct_locations} spots"
+                else:
+                    summary = "Map route (no GPS data)"
             else:
                 summary = page.page_type.value
             

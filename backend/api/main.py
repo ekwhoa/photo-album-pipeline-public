@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from dotenv import load_dotenv
 
 from api.routes import books, assets, pipeline
 from db import init_db
@@ -14,6 +15,10 @@ from services.metadata_extractor import register_heif_opener
 
 # Register HEIF/HEIC opener at startup (for iPhone photos)
 heif_available = register_heif_opener()
+
+# Load environment variables from backend/.env (optional)
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
 
 # Create app
 app = FastAPI(
@@ -35,6 +40,11 @@ app.add_middleware(
 media_path = Path("media")
 media_path.mkdir(exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(media_path)), name="media")
+
+# Mount static files for generated maps / caches
+data_path = Path("data")
+data_path.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(data_path)), name="static")
 
 # Include routers
 app.include_router(books.router, prefix="/books", tags=["books"])

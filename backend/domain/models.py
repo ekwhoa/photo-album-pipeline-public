@@ -297,6 +297,8 @@ class LayoutRect:
     text: Optional[str] = None
     font_size: Optional[float] = None
     color: Optional[str] = None
+    image_path: Optional[str] = None  # Absolute path for PDF rendering
+    image_url: Optional[str] = None   # Web URL for live preview
 
 
 @dataclass 
