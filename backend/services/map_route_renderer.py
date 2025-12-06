@@ -50,7 +50,7 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         ignored_by_cluster = len(points) - len(cluster_points)
 
         if len(cluster_points) < 2:
-            final_points = [(lat, lon) for _, lat, lon in indexed_points]
+            core_points = [(lat, lon) for _, lat, lon in indexed_points]
         else:
             center_lat = sum(lat for lat, _ in cluster_points) / len(cluster_points)
             center_lon = sum(lon for _, lon in cluster_points) / len(cluster_points)
@@ -68,16 +68,22 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
             ]
 
             if len(trimmed_points) < 2:
-                final_points = cluster_points
+                core_points = cluster_points
             else:
-                final_points = trimmed_points
+                core_points = trimmed_points
 
         if ignored_by_cluster > 0:
             print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; ignored {ignored_by_cluster} far-off points for rendering")
         else:
             print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; no points ignored")
 
-        bbox = _compute_bbox(final_points)
+        simplified_points = simplify_route(core_points, max_points=200, min_distance_km=0.05)
+        print(
+            f"[MAP] Simplified route from {len(core_points)} to "
+            f"{len(simplified_points)} points"
+        )
+
+        bbox = _compute_bbox(simplified_points)
         print(
             f"[MAP] BBox lat({bbox['min_lat']:.4f},{bbox['max_lat']:.4f}) "
             f"lon({bbox['min_lon']:.4f},{bbox['max_lon']:.4f}) "
@@ -92,12 +98,12 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         # Map points to canvas
         coords = [
             _latlon_to_xy(lat, lon, bbox, width, height)
-            for lat, lon in final_points
+            for lat, lon in simplified_points
         ]
 
         print(
-            f"[MAP] Drawing {len(final_points)} core points "
-            f"(ignored {len(cluster_points) - len(final_points)} edge points)"
+            f"[MAP] Drawing {len(simplified_points)} core points "
+            f"(ignored {len(cluster_points) - len(core_points)} edge points)"
         )
 
         if len(coords) >= 2:
@@ -174,6 +180,33 @@ def _filter_points_in_cluster(indexed_points: List[Tuple[int, float, float]], cl
     """Return ordered (lat, lon) for points belonging to the chosen cluster."""
     cluster_ids = {idx for idx, _, _ in cluster}
     return [(lat, lon) for idx, lat, lon in indexed_points if idx in cluster_ids]
+
+
+def simplify_route(points: List[Tuple[float, float]], max_points: int = 200, min_distance_km: float = 0.05) -> List[Tuple[float, float]]:
+    """
+    Reduce point count while preserving shape: keep first/last, drop near-duplicates, then downsample.
+    """
+    if len(points) < 2:
+        return points
+
+    simplified: List[Tuple[float, float]] = [points[0]]
+    last_lat, last_lon = points[0]
+
+    for lat, lon in points[1:-1]:
+        if _haversine_km(lat, lon, last_lat, last_lon) >= min_distance_km:
+            simplified.append((lat, lon))
+            last_lat, last_lon = lat, lon
+
+    simplified.append(points[-1])
+
+    if len(simplified) > max_points:
+        step = math.ceil((len(simplified) - 2) / max(1, max_points - 2))
+        simplified = [simplified[0]] + simplified[1:-1:step] + [simplified[-1]]
+
+    if len(simplified) < 2:
+        return points
+
+    return simplified
 
 
 def _compute_bbox(points: List[Tuple[float, float]], padding_ratio: float = 0.15, min_span_deg: float = 0.01) -> dict:
