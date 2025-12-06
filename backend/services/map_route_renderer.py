@@ -18,6 +18,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 # Directories
 DATA_DIR = BASE_DIR / "data"
 MAP_OUTPUT_DIR = DATA_DIR / "maps"
+DEBUG_MAP_RENDERING = True
 
 # Ensure directories exist
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -77,10 +78,10 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         else:
             print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; no points ignored")
 
-        simplified_points = simplify_route(core_points, max_points=200, min_distance_km=0.05)
+        simplified_points = simplify_route(core_points, max_points=25, min_distance_km=0.1)
         print(
-            f"[MAP] Simplified route from {len(core_points)} to "
-            f"{len(simplified_points)} points"
+            f"[MAP] Simplified route (raw {len(points)} -> cluster {len(core_points)} -> "
+            f"{len(simplified_points)} points) targeting ~20-30 pts"
         )
 
         bbox = _compute_bbox(simplified_points)
@@ -94,24 +95,45 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         width, height = 1600, 1000
         img = Image.new("RGB", (width, height), color="#f6f8fa")
         draw = ImageDraw.Draw(img)
-
-        # Map points to canvas
-        coords = [
-            _latlon_to_xy(lat, lon, bbox, width, height)
-            for lat, lon in simplified_points
-        ]
+        route_width = 6
+        route_color = "#2e8bc0"
+        margin_px = 90
+        coords = _map_points_to_canvas(simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9)
 
         print(
             f"[MAP] Drawing {len(simplified_points)} core points "
             f"(ignored {len(cluster_points) - len(core_points)} edge points)"
         )
 
+        if coords and DEBUG_MAP_RENDERING:
+            xs, ys = zip(*coords)
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            safe_left, safe_top = margin_px, margin_px
+            safe_right, safe_bottom = width - margin_px, height - margin_px
+            print(
+                f"[MAP] Debug bbox canvas=({width}x{height}) margin={margin_px}px "
+                f"route_px=({min_x:.1f},{min_y:.1f})-({max_x:.1f},{max_y:.1f}) "
+                f"safe_box=({safe_left},{safe_top})-({safe_right},{safe_bottom}) "
+                f"points={len(coords)}"
+            )
+
         if len(coords) >= 2:
-            draw.line(coords, fill="#2e8bc0", width=6, joint="curve")
+            if DEBUG_MAP_RENDERING:
+                safe_box = (margin_px, margin_px, width - margin_px, height - margin_px)
+                draw.rectangle(safe_box, outline="#d0d7de", width=2)
+
+            draw.line(coords, fill=route_color, width=route_width, joint="curve")
+
+            # Light smoothing at joints to soften corners
+            joint_radius = max(route_width // 2 + 1, route_width // 2)
+            for x, y in coords:
+                bbox_joint = (x - joint_radius, y - joint_radius, x + joint_radius, y + joint_radius)
+                draw.ellipse(bbox_joint, fill=route_color, outline=route_color)
 
             # Start / end markers
-            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline="#1f7a4d")
-            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline="#b22234")
+            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline="#3cb371")
+            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline="#e63946")
 
         filename = f"book_{book_id}_route.png"
         output_path = MAP_OUTPUT_DIR / filename
@@ -182,10 +204,8 @@ def _filter_points_in_cluster(indexed_points: List[Tuple[int, float, float]], cl
     return [(lat, lon) for idx, lat, lon in indexed_points if idx in cluster_ids]
 
 
-def simplify_route(points: List[Tuple[float, float]], max_points: int = 200, min_distance_km: float = 0.05) -> List[Tuple[float, float]]:
-    """
-    Reduce point count while preserving shape: keep first/last, drop near-duplicates, then downsample.
-    """
+def simplify_route(points: List[Tuple[float, float]], max_points: int = 25, min_distance_km: float = 0.1) -> List[Tuple[float, float]]:
+    """Reduce point count while preserving shape: keep first/last, drop near-duplicates, then downsample."""
     if len(points) < 2:
         return points
 
@@ -202,6 +222,9 @@ def simplify_route(points: List[Tuple[float, float]], max_points: int = 200, min
     if len(simplified) > max_points:
         step = math.ceil((len(simplified) - 2) / max(1, max_points - 2))
         simplified = [simplified[0]] + simplified[1:-1:step] + [simplified[-1]]
+
+    if len(simplified) > max_points and max_points >= 2:
+        simplified = simplified[: max_points - 1] + [simplified[-1]]
 
     if len(simplified) < 2:
         return points
@@ -241,12 +264,59 @@ def _compute_bbox(points: List[Tuple[float, float]], padding_ratio: float = 0.15
     }
 
 
-def _latlon_to_xy(lat: float, lon: float, bbox: dict, width: int, height: int) -> Tuple[float, float]:
-    """Map lat/lon to canvas coordinates using the padded bbox."""
-    # Invert latitude for y (north at top)
-    x = (lon - bbox["min_lon"]) / max(bbox["span_lon"], 1e-9)
-    y = (bbox["max_lat"] - lat) / max(bbox["span_lat"], 1e-9)
-    return x * width, y * height
+def _map_points_to_canvas(
+    points: List[Tuple[float, float]],
+    width: int,
+    height: int,
+    margin_px: int = 80,
+    shrink_factor: float = 0.9,
+) -> List[Tuple[float, float]]:
+    """Project lat/lon to canvas using local equirectangular projection and fixed margins."""
+    if not points:
+        return []
+
+    lats = [lat for lat, _ in points]
+    lons = [lon for _, lon in points]
+    lat_center = sum(lats) / len(lats)
+    lon_center = sum(lons) / len(lons)
+    lat_center_rad = math.radians(lat_center)
+
+    locals_xy: List[Tuple[float, float]] = []
+    for lat, lon in points:
+        dx = (lon - lon_center) * math.cos(lat_center_rad)
+        dy = (lat - lat_center)
+        locals_xy.append((dx, dy))
+
+    xs = [x for x, _ in locals_xy]
+    ys = [y for _, y in locals_xy]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    data_width = max_x - min_x
+    data_height = max_y - min_y
+    cx_data = (min_x + max_x) / 2.0
+    cy_data = (min_y + max_y) / 2.0
+
+    cx_canvas = width / 2.0
+    cy_canvas = height / 2.0
+
+    eps = 1e-9
+    if data_width < eps and data_height < eps:
+        return [(cx_canvas, cy_canvas) for _ in points]
+
+    inner_width = max(width - 2 * margin_px, eps)
+    inner_height = max(height - 2 * margin_px, eps)
+    scale_x = inner_width / max(data_width, eps)
+    scale_y = inner_height / max(data_height, eps)
+    scale = min(scale_x, scale_y) * shrink_factor
+
+    mapped: List[Tuple[float, float]] = []
+    for dx, dy in locals_xy:
+        x_px = cx_canvas + (dx - cx_data) * scale
+        y_px = cy_canvas - (dy - cy_data) * scale
+        mapped.append((x_px, y_px))
+
+    return mapped
 
 
 def _draw_marker(draw: ImageDraw.ImageDraw, center: Tuple[float, float], radius: int, fill: str, outline: str) -> None:
@@ -254,3 +324,94 @@ def _draw_marker(draw: ImageDraw.ImageDraw, center: Tuple[float, float], radius:
     x, y = center
     bbox = (x - radius, y - radius, x + radius, y + radius)
     draw.ellipse(bbox, fill=fill, outline=outline, width=2)
+
+
+def debug_render_synthetic_routes(output_dir: Path) -> None:
+    """
+    Generate synthetic route images for quick visual debugging without external data.
+    """
+    routes = {
+        "diag": [
+            (37.7700, -122.4700),
+            (37.7800, -122.4600),
+            (37.7900, -122.4500),
+            (37.8000, -122.4400),
+        ],
+        "loop": [
+            (37.7800, -122.4200),
+            (37.7820, -122.4180),
+            (37.7840, -122.4200),
+            (37.7820, -122.4220),
+            (37.7800, -122.4200),
+        ],
+        "east_west": [
+            (40.0000, -120.0000),
+            (40.0000, -115.0000),
+            (40.0000, -110.0000),
+            (40.0000, -105.0000),
+            (40.0000, -100.0000),
+            (40.0000, -95.0000),
+            (40.0000, -90.0000),
+            (40.0000, -85.0000),
+        ],
+        "north_south": [
+            (30.0000, -100.0000),
+            (32.5000, -100.0000),
+            (35.0000, -100.0000),
+            (37.5000, -100.0000),
+            (40.0000, -100.0000),
+            (42.5000, -100.0000),
+            (45.0000, -100.0000),
+        ],
+    }
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    width, height = 1600, 1000
+    route_width = 6
+    route_color = "#2e8bc0"
+    margin_px = 90
+    shrink_factor = 0.9
+
+    for name, pts in routes.items():
+        if len(pts) < 2:
+            continue
+
+        simplified = simplify_route(pts, max_points=25, min_distance_km=0.1)
+        bbox = _compute_bbox(simplified)
+        coords = _map_points_to_canvas(simplified, width, height, margin_px=margin_px, shrink_factor=shrink_factor)
+
+        print(f"[MAP][DEBUG] Synthetic '{name}' simplified to {len(simplified)} pts; bbox lat({bbox['min_lat']:.4f},{bbox['max_lat']:.4f}) lon({bbox['min_lon']:.4f},{bbox['max_lon']:.4f})")
+        if coords and DEBUG_MAP_RENDERING:
+            xs, ys = zip(*coords)
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            safe_left, safe_top = margin_px, margin_px
+            safe_right, safe_bottom = width - margin_px, height - margin_px
+            print(
+                f"[MAP][DEBUG] '{name}' canvas=({width}x{height}) margin={margin_px}px "
+                f"route_px=({min_x:.1f},{min_y:.1f})-({max_x:.1f},{max_y:.1f}) "
+                f"safe_box=({safe_left},{safe_top})-({safe_right},{safe_bottom}) "
+                f"points={len(coords)}"
+            )
+
+        img = Image.new("RGB", (width, height), color="#f6f8fa")
+        draw = ImageDraw.Draw(img)
+
+        if coords and len(coords) >= 2:
+            if DEBUG_MAP_RENDERING:
+                safe_box = (margin_px, margin_px, width - margin_px, height - margin_px)
+                draw.rectangle(safe_box, outline="#d0d7de", width=2)
+
+            draw.line(coords, fill=route_color, width=route_width, joint="curve")
+
+            joint_radius = max(route_width // 2 + 1, route_width // 2)
+            for x, y in coords:
+                bbox_joint = (x - joint_radius, y - joint_radius, x + joint_radius, y + joint_radius)
+                draw.ellipse(bbox_joint, fill=route_color, outline=route_color)
+
+            _draw_marker(draw, coords[0], radius=10, fill="#3cb371", outline="#3cb371")
+            _draw_marker(draw, coords[-1], radius=10, fill="#e63946", outline="#e63946")
+
+        out_path = output_dir / f"synthetic_{name}.png"
+        img.save(out_path, format="PNG")
+        print(f"[MAP][DEBUG] Saved synthetic route '{name}' to {out_path}")
