@@ -9,6 +9,10 @@ from typing import List, Tuple
 
 from PIL import Image
 import requests
+try:
+    import requests_cache
+except ImportError:  # pragma: no cover - optional dependency
+    requests_cache = None
 
 # Pillow >=10 removed Image.ANTIALIAS; staticmap still references it.
 if not hasattr(Image, "ANTIALIAS") and hasattr(Image, "Resampling"):
@@ -20,7 +24,15 @@ _TILE_USER_AGENT = os.getenv(
     "PhotoAlbumPipeline/1.0 (contact: support@example.com)",
 )
 _TILE_REFERER = os.getenv("MAP_TILE_REFERER", "")
-
+_TILE_URL_TEMPLATE = os.getenv(
+    "MAP_TILE_URL_TEMPLATE",
+    "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+)
+_TILE_TIMEOUT = float(os.getenv("MAP_TILE_TIMEOUT", "5.0"))
+_TILE_HEADERS = {
+    "User-Agent": _TILE_USER_AGENT,
+    "Referer": _TILE_REFERER,
+}
 _original_request = requests.sessions.Session.request
 
 
@@ -29,11 +41,23 @@ def _patched_request(self, method, url, **kwargs):
     headers.setdefault("User-Agent", _TILE_USER_AGENT)
     if _TILE_REFERER and "Referer" not in headers:
         headers["Referer"] = _TILE_REFERER
+    kwargs.setdefault("timeout", _TILE_TIMEOUT)
     return _original_request(self, method, url, **kwargs)
 
 
 # Patch requests so staticmap tile fetches include the required headers.
 requests.sessions.Session.request = _patched_request
+# Install a file-backed HTTP cache if requests-cache is available (helps when staticmap lacks tile_cache)
+if requests_cache:
+    try:
+        CACHE_PATH = MAP_CACHE_DIR / "tile_cache"
+        requests_cache.install_cache(
+            cache_name=str(CACHE_PATH),
+            backend="sqlite",
+            expire_after=60 * 60 * 24 * 7,  # 7 days
+        )
+    except Exception as cache_err:
+        print(f"[map_route_renderer] Failed to install requests-cache: {cache_err}")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -71,8 +95,10 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
     try:
         # Configure map (try to use on-disk tile cache when supported)
         map_kwargs = {
-            "url_template": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "url_template": _TILE_URL_TEMPLATE,
             "tile_cache": str(MAP_CACHE_DIR),
+            "tile_request_timeout": _TILE_TIMEOUT,
+            "headers": _TILE_HEADERS,
         }
         try:
             m = StaticMap(1600, 1000, **map_kwargs)

@@ -22,5 +22,8 @@ staticmap==0.5.5
 # Env loading
 python-dotenv>=1.0.0
 
+# HTTP caching for map tiles (fallback when staticmap tile_cache unsupported)
+requests-cache>=1.2.0
+
 # Future: S3 storage
 # boto3>=1.28.0

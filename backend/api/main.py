@@ -9,16 +9,16 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Load environment variables from backend/.env (optional) before other imports that read env
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
+
 from api.routes import books, assets, pipeline
 from db import init_db
 from services.metadata_extractor import register_heif_opener
 
 # Register HEIF/HEIC opener at startup (for iPhone photos)
 heif_available = register_heif_opener()
-
-# Load environment variables from backend/.env (optional)
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(env_path)
 
 # Create app
 app = FastAPI(
