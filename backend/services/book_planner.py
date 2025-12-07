@@ -178,8 +178,10 @@ def plan_book(
         day_pages, current_index, spread_used = _build_photo_pages_with_optional_spread(
             day_remaining, photos_per_page, asset_lookup, current_index, spread_used
         )
-        day_pages = _rebalance_day_photo_pages(day_pages)
         interior_pages.extend(day_pages)
+
+    # Apply per-day layout normalization (1-photo grids -> full-page photo)
+    interior_pages = _normalize_day_blocks(interior_pages)
 
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
@@ -610,39 +612,48 @@ def _build_photo_pages_with_optional_spread(
     return pages, current_index, spread_used
 
 
-def _rebalance_day_photo_pages(day_pages: List[Page]) -> List[Page]:
+def _normalize_day_blocks(pages: List[Page]) -> List[Page]:
     """
-    Post-process a day's photo pages to avoid 1-up grids.
-    - If the last grid has a single asset, try to steal one from a previous grid with >=3 assets.
-    - If no donor grid, convert the single grid into a full-page photo.
+    Normalize photo pages within each day block without crossing day boundaries.
+    A day block is: day_intro + its photo pages until the next day_intro/back_cover.
+    Converts any photo_grid with exactly one asset into a full_page_photo.
     """
-    grid_indices = [idx for idx, p in enumerate(day_pages) if p.page_type == PageType.PHOTO_GRID]
-    if not grid_indices:
-        return day_pages
+    result: List[Page] = []
+    current_intro: Optional[Page] = None
+    current_photos: List[Page] = []
 
-    last_idx = grid_indices[-1]
-    last_grid = day_pages[last_idx]
-    last_assets = last_grid.payload.get("asset_ids") or []
-    if len(last_assets) != 1:
-        return day_pages
+    def flush_block():
+        if current_intro:
+            result.append(current_intro)
+        if current_photos:
+            _normalize_day_photo_pages(current_photos)
+            result.extend(current_photos)
 
-    # Try to rebalance from earlier grids (search backwards)
-    for idx in reversed(grid_indices[:-1]):
-        donor = day_pages[idx]
-        donor_assets = donor.payload.get("asset_ids") or []
-        if len(donor_assets) >= 3:
-            moved = donor_assets.pop()
-            donor.payload["asset_ids"] = donor_assets
-            last_assets.append(moved)
-            last_grid.payload["asset_ids"] = last_assets
-            return day_pages
+    for p in pages:
+        if p.page_type == PageType.DAY_INTRO:
+            flush_block()
+            current_intro = p
+            current_photos = []
+        else:
+            current_photos.append(p)
+    flush_block()
+    return result
 
-    # No donor found: convert the single grid to a full-page photo
-    aid = last_assets[0]
-    last_grid.page_type = PageType.FULL_PAGE_PHOTO
-    last_grid.payload["hero_asset_id"] = aid
-    print(f"[planner][info] converted single-photo grid to full page: {aid}")
-    return day_pages
+
+def _normalize_day_photo_pages(day_pages: List[Page]) -> None:
+    """
+    Convert any 1-photo grid within a single day to a full-page photo.
+    Operates in-place and does not move photos between pages.
+    """
+    for page in day_pages:
+        if page.page_type != PageType.PHOTO_GRID:
+            continue
+        assets = page.payload.get("asset_ids") or []
+        if len(assets) == 1:
+            aid = assets[0]
+            page.page_type = PageType.FULL_PAGE_PHOTO
+            page.payload["hero_asset_id"] = aid
+            print(f"[planner][info] converted single-photo grid to full page: {aid}")
 
 
 def _select_cluster_hero(cluster: List[str], asset_lookup: Dict[str, Asset]) -> str:
