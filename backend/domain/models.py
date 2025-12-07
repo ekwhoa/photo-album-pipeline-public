@@ -44,6 +44,7 @@ class PageType(str, Enum):
     FRONT_COVER = "front_cover"
     PHOTO_GRID = "photo_grid"
     BACK_COVER = "back_cover"
+    DAY_INTRO = "day_intro"
     
     # Future page types (structure only)
     MAP_ROUTE = "map_route"

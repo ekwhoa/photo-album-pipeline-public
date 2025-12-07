@@ -285,6 +285,59 @@ def layout_back_cover(page: Page, context: RenderContext) -> PageLayout:
 
 # These are defined but raise NotImplementedError until implemented
 
+@register_layout(PageType.DAY_INTRO)
+def layout_day_intro(page: Page, context: RenderContext) -> PageLayout:
+    """Simple centered day intro page."""
+    theme = context.theme
+    width = context.page_width_mm
+    height = context.page_height_mm
+    margin = theme.page_margin_mm
+
+    elements: List[LayoutRect] = []
+    day_index = page.payload.get("day_index")
+    day_date = page.payload.get("display_date") or page.payload.get("day_date") or "Day"
+    photo_count = page.payload.get("day_photo_count")
+
+    header_text = f"Day {day_index}" if day_index else "Day"
+    footer_text = f"{photo_count} photos" if photo_count is not None else ""
+
+    elements.append(LayoutRect(
+        x_mm=margin,
+        y_mm=height * 0.35,
+        width_mm=width - 2 * margin,
+        height_mm=12,
+        text=header_text,
+        font_size=12,
+        color=theme.secondary_color,
+    ))
+    elements.append(LayoutRect(
+        x_mm=margin,
+        y_mm=height * 0.42,
+        width_mm=width - 2 * margin,
+        height_mm=18,
+        text=day_date,
+        font_size=24,
+        color=theme.primary_color,
+    ))
+    if footer_text:
+        elements.append(LayoutRect(
+            x_mm=margin,
+            y_mm=height * 0.52,
+            width_mm=width - 2 * margin,
+            height_mm=10,
+            text=footer_text,
+            font_size=12,
+            color=theme.secondary_color,
+        ))
+
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=theme.background_color,
+        elements=elements,
+    )
+
+
 @register_layout(PageType.MAP_ROUTE)
 def layout_map_route(page: Page, context: RenderContext) -> PageLayout:
     """Text-only layout for map route stats."""

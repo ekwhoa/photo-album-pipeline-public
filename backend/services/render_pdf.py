@@ -380,6 +380,52 @@ def _render_trip_summary_card(
     """
 
 
+def _render_day_intro(
+    layout: PageLayout,
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+) -> str:
+    """Render a simple day intro page."""
+    bg_color = layout.background_color or theme.background_color
+    day_index = layout.elements and layout.elements[0]  # unused, payload holds info
+    payload = {}
+    # payload not available directly on layout; rely on .page_content in elements is not accessible here.
+    # Use layout.page_type specific data: stored in layout? Not available; use layout.elements? Instead,
+    # fallback to reading from layout via attributes set in book planner payload when creating PageLayout.
+    day_idx = layout.elements and layout.elements[0].text if layout.elements else ""
+    # Since LayoutRects already hold text, build HTML from PageLayout elements directly.
+    header = ""
+    title = ""
+    photos = ""
+    for elem in layout.elements:
+        if elem.font_size and elem.font_size >= 20:
+            title = elem.text
+        elif elem.font_size and elem.font_size <= 12 and not header:
+            header = elem.text
+        elif elem.font_size and elem.font_size <= 12:
+            photos = elem.text
+    return f"""
+    <div class="page day-intro-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {bg_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    ">
+        <div class="page-content" style="text-align: center; display: flex; flex-direction: column; gap: 6px;">
+            <div style="font-size: 12pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
+            <div style="font-size: 24pt; font-family: {theme.title_font_family}; color: {theme.primary_color};">{title}</div>
+            {f'<div style="font-size: 12pt; color: {theme.secondary_color};">{photos}</div>' if photos else ''}
+        </div>
+    </div>
+    """
+
+
 def _render_photo_grid_card(
     layout: PageLayout,
     assets: Dict[str, Asset],
@@ -535,6 +581,8 @@ def _render_page_html(
         return _render_trip_summary_card(layout, theme, width_mm, height_mm)
     if layout.page_type == PageType.PHOTO_GRID:
         return _render_photo_grid_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
+    if layout.page_type == PageType.DAY_INTRO:
+        return _render_day_intro(layout, theme, width_mm, height_mm)
 
     bg_color = layout.background_color or theme.background_color
     

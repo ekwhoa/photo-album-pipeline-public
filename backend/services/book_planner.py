@@ -116,9 +116,45 @@ def plan_book(
     # Deduplicate near-identical shots per day (order preserved)
     deduped_ids, dedup_summary = _dedupe_assets_by_day(all_asset_ids, asset_lookup)
 
-    # Create interior photo grid pages
+    # Organize deduped ids by day for day intro + grids
+    day_asset_sets: List[Tuple[int, Optional[date], List[str]]] = []
+    assigned: set[str] = set()
+    for idx, day in enumerate(days):
+        day_ids = [entry.asset_id for entry in day.all_entries]
+        day_set = set(day_ids)
+        filtered = [aid for aid in deduped_ids if aid in day_set]
+        assigned.update(filtered)
+        if filtered:
+            day_asset_sets.append((idx + 1, day.date.date() if day.date else None, filtered))
+    # Any remaining assets without a day mapping
+    remaining = [aid for aid in deduped_ids if aid not in assigned]
+    if remaining:
+        day_asset_sets.append((len(day_asset_sets) + 1, None, remaining))
+
     photos_per_page = PHOTOS_PER_PAGE.get(size.value, 4)
-    interior_pages = _create_photo_grid_pages(deduped_ids, photos_per_page, asset_lookup, start_index=interior_start_index)
+    interior_pages: List[Page] = []
+    current_index = interior_start_index
+    day_intro_pages_count = 0
+    for day_index, day_date, day_ids in day_asset_sets:
+        day_photo_count = len(day_ids)
+        display_date = day_date.strftime("%B %d, %Y") if day_date else None
+        day_intro_pages_count += 1
+        interior_pages.append(
+            Page(
+                index=current_index,
+                page_type=PageType.DAY_INTRO,
+                payload={
+                    "day_index": day_index,
+                    "day_date": day_date.isoformat() if day_date else None,
+                    "display_date": display_date,
+                    "day_photo_count": day_photo_count,
+                },
+            )
+        )
+        current_index += 1
+        grids = _create_photo_grid_pages(day_ids, photos_per_page, asset_lookup, start_index=current_index)
+        interior_pages.extend(grids)
+        current_index += len(grids)
 
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
@@ -157,9 +193,10 @@ def plan_book(
     print(
         f"[planner] Assets: approved={approved_count} considered={considered_count} "
         f"used={used_count} auto_hidden_clusters={auto_hidden_clusters_count} "
-        f"auto_hidden_assets={auto_hidden_hidden_assets_count}"
+        f"auto_hidden_assets={auto_hidden_hidden_assets_count} "
+        f"day_intro_pages={day_intro_pages_count}"
     )
-    
+
     # Create back cover (last page)
     back_cover = Page(
         index=len(all_interior_pages) + 1,
