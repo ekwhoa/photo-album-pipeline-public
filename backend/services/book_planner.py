@@ -22,6 +22,8 @@ PHOTOS_PER_PAGE = {
     "11x14": 9,
 }
 
+_grid_variant_counter = 0  # tracks per-day usage of special 4-photo variant
+
 # Near-duplicate tuning: be very conservative
 HIGH_SIMILARITY_THRESHOLD = 0.92  # only treat as true duplicates when this high
 MIN_CLUSTER_SIZE_FOR_AUTO_HIDE = 3  # never auto-hide if only 2 photos
@@ -184,6 +186,7 @@ def plan_book(
             )
         )
         current_index += 1
+        _reset_grid_variant_counter()
         # Optional full-page hero for the day
         day_remaining = list(day_ids)
         if (
@@ -964,6 +967,7 @@ def _create_photo_grid_pages(asset_ids: List[str], photos_per_page: int, asset_l
             payload={
                 "asset_ids": batch,
                 "layout": _select_grid_layout(len(batch), photos_per_page),
+                "layout_variant": choose_grid_layout_variant(len(batch)),
             },
         )
         pages.append(page)
@@ -990,14 +994,27 @@ def _select_grid_layout(photo_count: int, max_photos: int) -> str:
         return "grid_3x3"
 
 
+def _reset_grid_variant_counter() -> None:
+    """Reset per-day grid variant counter."""
+    global _grid_variant_counter
+    _grid_variant_counter = 0
+
+
 def choose_grid_layout_variant(photo_count: int) -> str:
     """
     Return a layout_variant string for a photo_grid page.
 
-    For now we keep a single default layout so the preview
-    and PDF remain unchanged until variant layouts are
-    introduced visually.
+    Heuristic:
+    - Default to "default".
+    - For 4-photo grids, allow up to the first two grids per day
+      to use "grid_4_simple".
     """
+    global _grid_variant_counter
+    if photo_count != 4:
+        return "default"
+    if _grid_variant_counter < 2:
+        _grid_variant_counter += 1
+        return "grid_4_simple"
     return "default"
 
 
