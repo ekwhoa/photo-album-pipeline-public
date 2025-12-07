@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { BookOpen, FileText, Grid3X3, Image, MapPin, Star, Calendar } from 'lucide-react';
-import type { Asset, PagePreview } from '@/lib/api';
+import type { Asset } from '@/lib/api';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
+import type { BookPage, GridLayoutVariant } from '@/types/book';
 
 interface PagePreviewCardProps {
-  page: PagePreview;
+  page: BookPage;
   assets: Asset[]; // unused, kept for prop compatibility
   bookTitle?: string;
   onClick?: () => void;
@@ -53,7 +54,9 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assetMap[heroId] : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
-  const spreadSlot = (page as any).spread_slot || (page as any).spreadSlot;
+  const spreadSlot =
+    (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
+    (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
 
   return (
     <Card
@@ -117,8 +120,13 @@ function SpreadImage({ src, slot }: { src: string; slot: 'left' | 'right' }) {
   );
 }
 
-function PhotoGridPreview({ page, assetMap }: { page: PagePreview; assetMap: Record<string, Asset> }) {
-  const variant = (page as any).layout_variant || 'grid_4_simple';
+function getLayoutVariant(page: BookPage | null | undefined): GridLayoutVariant | null {
+  return page?.layout_variant ?? null;
+}
+
+function PhotoGridPreview({ page, assetMap }: { page: BookPage; assetMap: Record<string, Asset> }) {
+  const rawVariant = getLayoutVariant(page);
+  const variant: GridLayoutVariant = rawVariant && rawVariant !== 'default' ? rawVariant : 'grid_4_simple';
   const assets = (page.asset_ids || [])
     .map((id) => assetMap[id])
     .filter(Boolean) as Asset[];

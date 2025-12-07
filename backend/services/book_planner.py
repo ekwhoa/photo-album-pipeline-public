@@ -226,6 +226,7 @@ def plan_book(
     if map_route_page:
         all_interior_pages.append(map_route_page)
     all_interior_pages.extend(interior_pages)
+    all_interior_pages = _ensure_layout_variants(all_interior_pages)
 
     # Debug accounting
     db_approved_ids = set(all_asset_ids)
@@ -661,7 +662,11 @@ def _normalize_day_photo_pages(day_pages: List[Page], profile: DayLayoutProfile,
         if page.page_type != PageType.PHOTO_GRID:
             continue
         assets = page.payload.get("asset_ids") or []
-        if len(assets) == 1 and profile.prefer_full_page_for_leftovers and full_count < profile.max_full_page_photos:
+        if (
+            len(assets) == 1
+            and profile.prefer_full_page_for_leftovers
+            and full_used < profile.max_full_page_photos
+        ):
             aid = assets[0]
             page.page_type = PageType.FULL_PAGE_PHOTO
             page.payload["hero_asset_id"] = aid
@@ -987,16 +992,27 @@ def _select_grid_layout(photo_count: int, max_photos: int) -> str:
 
 def choose_grid_layout_variant(photo_count: int) -> str:
     """
-    Return a layout_variant string for a photo_grid page
-    based on how many photos it contains.
+    Return a layout_variant string for a photo_grid page.
+
+    For now we keep a single default layout so the preview
+    and PDF remain unchanged until variant layouts are
+    introduced visually.
     """
-    if photo_count == 2:
-        return "grid_2up"
-    if photo_count == 3:
-        return "grid_3up_hero"
-    if photo_count in (5, 6):
-        return "grid_6_dense"
-    return "grid_4_simple"
+    return "default"
+
+
+def _ensure_layout_variants(pages: List[Page]) -> List[Page]:
+    """
+    Ensure every photo_grid page has a non-null layout_variant.
+    Currently defaults to "default" to match existing layouts.
+    """
+    for page in pages:
+        if page.page_type == PageType.PHOTO_GRID:
+            payload = page.payload or {}
+            if payload.get("layout_variant") is None:
+                payload["layout_variant"] = "default"
+                page.payload = payload
+    return pages
 
 
 # ============================================

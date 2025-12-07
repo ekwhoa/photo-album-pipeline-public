@@ -160,6 +160,8 @@ async def get_pages(book_id: str):
             elif page.page_type.value == "photo_grid":
                 asset_ids = page.payload.get("asset_ids", [])
                 layout_variant = page.payload.get("layout_variant")
+                if layout_variant is None:
+                    layout_variant = "default"
                 summary = f"{len(asset_ids)} photos"
             elif page.page_type.value == "back_cover":
                 summary = page.payload.get("text", "Back cover")

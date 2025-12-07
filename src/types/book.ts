@@ -36,6 +36,7 @@ export const PAGE_TYPE_LABELS: Record<PageType, string> = {
 };
 
 export type GridLayoutVariant =
+  | 'default'
   | 'grid_4_simple'
   | 'grid_2up'
   | 'grid_3up_hero'
@@ -69,7 +70,7 @@ export interface PhotoGridPage {
   page_type: 'photo_grid';
   asset_ids: string[];
   layout?: string;
-  layout_variant?: GridLayoutVariant;
+  layout_variant?: GridLayoutVariant | null;
 }
 
 export const BOOK_SIZES = [

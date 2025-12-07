@@ -36,7 +36,7 @@ export interface PagePreview {
   summary: string;
   asset_ids?: string[];
   hero_asset_id?: string | null;
-  layout_variant?: 'grid_4_simple' | 'grid_2up' | 'grid_3up_hero' | 'grid_6_dense';
+  layout_variant?: 'default' | 'grid_4_simple' | 'grid_2up' | 'grid_3up_hero' | 'grid_6_dense' | null;
 }
 
 export interface GenerateResult {
