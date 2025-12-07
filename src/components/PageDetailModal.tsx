@@ -78,9 +78,10 @@ export function PageDetailModal({
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assets.find((a) => a.id === heroId) : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
-  const spreadSlot =
+  const spreadSlotRaw =
     (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
     (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
+  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? 'left';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -93,17 +94,8 @@ export function PageDetailModal({
         </DialogHeader>
 
         <div className="mt-4">
-          {page.page_type === 'photo_spread' && heroSrc && spreadSlot ? (
-            <div className="spread-frame w-full h-full overflow-hidden">
-              <div className="grid grid-cols-2 gap-0 w-full h-full">
-                <div className="relative">
-                  <img src={heroSrc} alt="" className="spread-img spread-img-left absolute inset-0 w-full h-full object-cover" />
-                </div>
-                <div className="relative">
-                  <img src={heroSrc} alt="" className="spread-img spread-img-right absolute inset-0 w-full h-full object-cover" />
-                </div>
-              </div>
-            </div>
+          {page.page_type === 'photo_spread' && heroSrc ? (
+            <SpreadDetail src={heroSrc} slot={spreadSlot} />
           ) : page.page_type === 'photo_grid' ? (
             <PhotoGridDetail page={page} assets={assets} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
@@ -213,6 +205,23 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
   return (
     <div className="grid grid-cols-2 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg min-h-[360px]">
       {gridAssets.slice(0, 4).map((asset) => renderImage(asset))}
+    </div>
+  );
+}
+
+function SpreadDetail({ src, slot }: { src: string; slot: 'left' | 'right' }) {
+  const leftCls = 'spread-img spread-img-left absolute inset-0 w-full h-full object-cover';
+  const rightCls = 'spread-img spread-img-right absolute inset-0 w-full h-full object-cover';
+  return (
+    <div className="spread-frame w-full h-full overflow-hidden">
+      <div className="grid grid-cols-2 gap-0 w-full h-full">
+        <div className="relative">
+          <img src={src} alt="" className={slot === 'right' ? rightCls : leftCls} />
+        </div>
+        <div className="relative">
+          <img src={src} alt="" className={slot === 'left' ? leftCls : rightCls} />
+        </div>
+      </div>
     </div>
   );
 }
