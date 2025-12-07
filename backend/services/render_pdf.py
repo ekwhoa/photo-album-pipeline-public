@@ -460,10 +460,10 @@ def _render_photo_grid_card(
                 width: 88%;
                 margin: 4mm auto;
                 padding: 6mm;
-                background: #f8fafc;
-                border: 1px solid #d9e2ec;
-                border-radius: 6px;
-                box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
+                background: {bg_color};
+                border: none;
+                border-radius: 0;
+                box-shadow: none;
                 display: flex;
                 flex-direction: column;
                 gap: 3mm;
