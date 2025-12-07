@@ -21,6 +21,10 @@ PHOTOS_PER_PAGE = {
     "11x14": 9,
 }
 
+# Near-duplicate tuning: be very conservative
+HIGH_SIMILARITY_THRESHOLD = 0.92  # only treat as true duplicates when this high
+MIN_CLUSTER_SIZE_FOR_AUTO_HIDE = 3  # never auto-hide if only 2 photos
+
 
 def plan_book(
     book_id: str,
@@ -293,11 +297,15 @@ def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) 
             if not (a.metadata.width and a.metadata.height and b.metadata.width and b.metadata.height):
                 return False
             same_orientation = (a.metadata.width >= a.metadata.height) == (b.metadata.width >= b.metadata.height)
-            max_dim = max(a.metadata.width, a.metadata.height, b.metadata.width, b.metadata.height)
-            dim_diff = max(abs(a.metadata.width - b.metadata.width), abs(a.metadata.height - b.metadata.height))
-            if same_orientation and dim_diff <= max(64, 0.05 * max_dim):
-                return True
-            return False
+            if not same_orientation:
+                return False
+            area_a = a.metadata.width * a.metadata.height
+            area_b = b.metadata.width * b.metadata.height
+            area_ratio = min(area_a, area_b) / max(area_a, area_b) if max(area_a, area_b) > 0 else 0
+            width_ratio = min(a.metadata.width, b.metadata.width) / max(a.metadata.width, b.metadata.width)
+            height_ratio = min(a.metadata.height, b.metadata.height) / max(a.metadata.height, b.metadata.height)
+            similarity = min(area_ratio, width_ratio, height_ratio)
+            return similarity >= HIGH_SIMILARITY_THRESHOLD
 
         current_cluster: List[str] = []
         for aid in sorted_ids:
@@ -314,21 +322,42 @@ def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) 
 
         cluster_counter = 0
         for cluster in local_clusters:
-            if len(cluster) == 1:
-                clustered_keep.append(cluster[0])
+            if len(cluster) < MIN_CLUSTER_SIZE_FOR_AUTO_HIDE:
+                clustered_keep.extend(cluster)
                 continue
-            cluster_counter += 1
             hero = _select_cluster_hero(cluster, asset_lookup)
-            clustered_keep.append(hero)
             hidden = [aid for aid in cluster if aid != hero]
-            dropped += len(hidden)
-            clusters.append(
-                {
-                    "cluster_id": f"day_{current_day_date}_{cluster_counter}",
-                    "kept_asset_id": hero,
-                    "hidden_asset_ids": hidden,
-                }
-            )
+
+            # Require high similarity of hero to every hidden item
+            def similarity_ok(a_id: str, b_id: str) -> bool:
+                a = asset_lookup.get(a_id)
+                b = asset_lookup.get(b_id)
+                if not a or not b or not a.metadata or not b.metadata:
+                    return False
+                area_a = (a.metadata.width or 0) * (a.metadata.height or 0)
+                area_b = (b.metadata.width or 0) * (b.metadata.height or 0)
+                if area_a == 0 or area_b == 0:
+                    return False
+                area_ratio = min(area_a, area_b) / max(area_a, area_b)
+                width_ratio = min(a.metadata.width or 0, b.metadata.width or 0) / max(a.metadata.width or 0, b.metadata.width or 0)
+                height_ratio = min(a.metadata.height or 0, b.metadata.height or 0) / max(a.metadata.height or 0, b.metadata.height or 0)
+                same_orientation = (a.metadata.width or 0 >= a.metadata.height or 0) == (b.metadata.width or 0 >= b.metadata.height or 0)
+                similarity = min(area_ratio, width_ratio, height_ratio) if same_orientation else 0
+                return similarity >= HIGH_SIMILARITY_THRESHOLD
+
+            if hidden and all(similarity_ok(hero, hid) for hid in hidden):
+                cluster_counter += 1
+                clustered_keep.append(hero)
+                dropped += len(hidden)
+                clusters.append(
+                    {
+                        "cluster_id": f"day_{current_day_date}_{cluster_counter}",
+                        "kept_asset_id": hero,
+                        "hidden_asset_ids": hidden,
+                    }
+                )
+            else:
+                clustered_keep.extend(cluster)
 
         kept.extend(clustered_keep)
 

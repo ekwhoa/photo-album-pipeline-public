@@ -35,7 +35,6 @@ import {
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { toast } from 'sonner';
-import { useMemo, useState, useEffect } from 'react';
 
 export default function BookDetailPage() {
   const { id } = useParams<{ id: string }>();
