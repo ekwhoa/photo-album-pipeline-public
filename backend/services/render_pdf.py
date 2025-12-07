@@ -471,7 +471,11 @@ def _render_photo_spread(
     """
 
     # Use background positioning to clearly split the image across the spread.
-    position = "left center" if spread_slot == "left" else "right center"
+    # Fall back to page parity if spread_slot not provided so web/preview matches PDF
+    slot = spread_slot
+    if not slot and layout.page_index is not None:
+        slot = "left" if layout.page_index % 2 == 0 else "right"
+    position = "left center" if slot == "left" else "right center"
 
     return f"""
     <div class="page" style="position:relative;width:{width_mm}mm;height:{height_mm}mm;background:{bg_color};page-break-after: always;overflow:hidden;">
