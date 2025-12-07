@@ -95,7 +95,7 @@ export function PageDetailModal({
 
         <div className="mt-4">
           {page.page_type === 'photo_spread' && heroSrc ? (
-            <SpreadDetail src={heroSrc} slot={spreadSlot} />
+            <SpreadDetail src={heroSrc} />
           ) : page.page_type === 'photo_grid' ? (
             <PhotoGridDetail page={page} assets={assets} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
@@ -209,17 +209,27 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
   );
 }
 
-function SpreadDetail({ src, slot }: { src: string; slot: 'left' | 'right' }) {
-  const leftCls = 'spread-img spread-img-left absolute inset-0 w-full h-full object-cover';
-  const rightCls = 'spread-img spread-img-right absolute inset-0 w-full h-full object-cover';
+function SpreadDetail({ src }: { src: string }) {
   return (
-    <div className="spread-frame w-full h-full overflow-hidden">
-      <div className="grid grid-cols-2 gap-0 w-full h-full">
-        <div className="relative">
-          <img src={src} alt="" className={slot === 'right' ? rightCls : leftCls} />
-        </div>
-        <div className="relative">
-          <img src={src} alt="" className={slot === 'left' ? leftCls : rightCls} />
+    <div className="w-full flex justify-center">
+      <div className="w-full max-w-4xl">
+        <div className="flex gap-2">
+          <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
+            <img
+              src={src}
+              alt="Left page"
+              className="h-full w-full object-cover"
+              style={{ objectPosition: 'left center' }}
+            />
+          </div>
+          <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
+            <img
+              src={src}
+              alt="Right page"
+              className="h-full w-full object-cover"
+              style={{ objectPosition: 'right center' }}
+            />
+          </div>
         </div>
       </div>
     </div>

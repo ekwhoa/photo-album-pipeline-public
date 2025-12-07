@@ -67,7 +67,7 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
       <CardContent className="p-0">
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc) ? (
-            <SpreadImage src={heroSrc} slot={spreadSlot} />
+            <SpreadImage src={heroSrc} alt={page.summary || 'Photo spread'} />
           ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
             <PhotoGridPreview page={page} assetMap={assetMap} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
@@ -122,19 +122,21 @@ function SpreadImage({
   className?: string;
 }) {
   return (
-    <div className={`spread-frame flex w-full h-full overflow-hidden ${className}`}>
-      <div className="flex-1 relative">
+    <div className={clsx('flex gap-1 w-full', className)}>
+      <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
         <img
           src={src}
-          alt={alt}
-          className="spread-img spread-img-left absolute inset-0 w-full h-full object-cover"
+          alt={alt || 'Left page'}
+          className="h-full w-full object-cover"
+          style={{ objectPosition: 'left center' }}
         />
       </div>
-      <div className="flex-1 relative">
+      <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
         <img
           src={src}
-          alt={alt}
-          className="spread-img spread-img-right absolute inset-0 w-full h-full object-cover"
+          alt={alt || 'Right page'}
+          className="h-full w-full object-cover"
+          style={{ objectPosition: 'right center' }}
         />
       </div>
     </div>
