@@ -660,8 +660,8 @@ def _normalize_day_photo_pages(day_pages: List[Page]) -> None:
 # Segment debug helpers
 # ---------------------------
 
-MAX_SEGMENT_TIME_GAP_MINUTES = 120  # Split if gap between photos exceeds 2h
-LARGE_MOVE_DISTANCE_KM = 10.0       # Split if distance jump exceeds 10km
+MAX_SEGMENT_TIME_GAP_MINUTES = 90   # Split if gap between photos exceeds 1.5h
+LARGE_MOVE_DISTANCE_KM = 5.0        # Split if distance jump exceeds 5km
 MIN_PHOTOS_PER_SEGMENT = 3          # Avoid micro segments; merge if below this
 
 
@@ -677,7 +677,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
-def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any]], int, int]:
+def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any]], int, int, int, int]:
     """
     Split a day's assets into segments based on time gaps and distance jumps.
     Steps:
@@ -693,6 +693,7 @@ def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any
     break_reasons: List[Dict[str, bool]] = []  # reasons for break after segment i
     large_gap_count = 0
     large_move_count = 0
+    candidate_breaks = 0
 
     for prev, curr in zip(day_assets, day_assets[1:]):
         split = False
@@ -720,6 +721,7 @@ def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any
                 reason["move_gap"] = True
                 large_move_count += 1
         if split:
+            candidate_breaks += 1
             segments.append(current_segment)
             break_reasons.append(reason)
             current_segment = [curr]
@@ -790,7 +792,8 @@ def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any
                 "approx_distance_km": dist_km if dist_km > 0 else None,
             }
         )
-    return out, large_gap_count, large_move_count
+    kept_breaks = len(segments) - 1
+    return out, large_gap_count, large_move_count, candidate_breaks, kept_breaks
 
 
 def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -> Dict[str, Any]:
@@ -818,7 +821,7 @@ def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -
             )
         )
         total_assets += len(ordered_assets)
-        segments, gap_count, move_count = _build_segments_for_day(ordered_assets)
+        segments, gap_count, move_count, candidate_breaks, kept_breaks = _build_segments_for_day(ordered_assets)
         total_segments += len(segments)
         day_entries.append(
             {
@@ -830,7 +833,9 @@ def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -
         )
         print(
             f"[segmenter] book={book_id} day={day.date.date() if day.date else 'n/a'} "
-            f"assets={len(ordered_assets)} segments={len(segments)} gaps>{MAX_SEGMENT_TIME_GAP_MINUTES}m={gap_count} moves>{LARGE_MOVE_DISTANCE_KM}km={move_count}"
+            f"assets={len(ordered_assets)} segments={len(segments)} "
+            f"gaps>{MAX_SEGMENT_TIME_GAP_MINUTES}m={gap_count} moves>{LARGE_MOVE_DISTANCE_KM}km={move_count} "
+            f"breakpoints={candidate_breaks} kept={kept_breaks}"
         )
 
     print(f"[segments] book={book_id} days={len(day_entries)} segments={total_segments}")
