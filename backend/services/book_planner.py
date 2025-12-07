@@ -115,7 +115,7 @@ def plan_book(
     # Create interior photo grid pages
     photos_per_page = PHOTOS_PER_PAGE.get(size.value, 4)
     interior_pages = _create_photo_grid_pages(deduped_ids, photos_per_page, asset_lookup, start_index=interior_start_index)
-    
+
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
     if map_route_page:
@@ -123,23 +123,37 @@ def plan_book(
     all_interior_pages.extend(interior_pages)
 
     # Debug accounting
-    approved_ids = set(all_asset_ids)
+    db_approved_ids = set(all_asset_ids)
+    considered_ids = set(all_asset_ids)
     used_ids = set(deduped_ids)
-    hidden_ids = set()
+    hidden_ids = {
+        hid
+        for cluster in dedup_summary.get("clusters", [])
+        for hid in cluster.get("hidden_asset_ids", [])
+    }
     for cluster in dedup_summary.get("clusters", []):
-        hidden_ids.update(cluster.get("hidden_asset_ids", []))
         hero = cluster.get("kept_asset_id")
         if hero:
             used_ids.add(hero)
     # Include cover hero if it comes from approved assets
     if hero_asset_id:
         used_ids.add(hero_asset_id)
-    unused_ids = sorted(list(approved_ids - used_ids - hidden_ids))
+
+    approved_count = len(db_approved_ids)
+    considered_count = len(considered_ids)
+    used_count = len(used_ids)
+    auto_hidden_clusters_count = len(dedup_summary.get("clusters", []))
+    auto_hidden_hidden_assets_count = len(hidden_ids)
+
+    if approved_count != used_count + auto_hidden_hidden_assets_count:
+        print(
+            f"[planner][warn] count mismatch: approved={approved_count} used={used_count} hidden_assets={auto_hidden_hidden_assets_count}"
+        )
 
     print(
-        f"[planner] Assets: approved={len(assets)} used={len(deduped_ids)} "
-        f"auto_hidden_duplicates={dedup_summary.get('dropped', 0)} "
-        f"unused={len(unused_ids)}"
+        f"[planner] Assets: approved={approved_count} considered={considered_count} "
+        f"used={used_count} auto_hidden_clusters={auto_hidden_clusters_count} "
+        f"auto_hidden_assets={auto_hidden_hidden_assets_count}"
     )
     
     # Create back cover (last page)
@@ -160,7 +174,10 @@ def plan_book(
         pages=all_interior_pages,
         back_cover=back_cover,
         auto_hidden_duplicate_clusters=dedup_summary.get("clusters", []),
-        unused_approved_asset_ids=unused_ids,
+        auto_hidden_clusters_count=auto_hidden_clusters_count,
+        auto_hidden_hidden_assets_count=auto_hidden_hidden_assets_count,
+        considered_count=considered_count,
+        used_count=used_count,
     )
 
 

@@ -160,7 +160,10 @@ class Book:
     last_generated: Optional[datetime] = None
     pdf_path: Optional[str] = None
     auto_hidden_duplicate_clusters: List[Dict[str, Any]] = field(default_factory=list)
-    unused_approved_asset_ids: List[str] = field(default_factory=list)
+    auto_hidden_clusters_count: int = 0
+    auto_hidden_hidden_assets_count: int = 0
+    considered_count: int = 0
+    used_count: int = 0
     
     @staticmethod
     def generate_id() -> str:

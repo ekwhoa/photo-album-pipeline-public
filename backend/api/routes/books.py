@@ -53,11 +53,11 @@ def book_to_response(book: Book, asset_count: int, approved_count: int) -> BookR
 class DedupeDebugResponse(BaseModel):
     book_id: str
     approved_count: int
+    considered_count: int
     used_count: int
-    auto_hidden_duplicates_count: int
+    auto_hidden_clusters_count: int
+    auto_hidden_hidden_assets_count: int
     auto_hidden_duplicate_clusters: List[dict]
-    unused_approved_count: int
-    unused_approved_asset_ids: List[str]
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -81,19 +81,16 @@ async def dedupe_debug(book_id: str):
         )
 
         total, approved_count = assets_repo.count_by_book(session, book.id)
-        used_count = sum(
-            len(page.payload.get("asset_ids", []))
-            for page in planned.pages
-            if page.page_type == PageType.PHOTO_GRID
-        )
+        considered_count = planned.considered_count or approved_count
+        used_count = planned.used_count or 0
         return DedupeDebugResponse(
             book_id=book.id,
             approved_count=approved_count,
+            considered_count=considered_count,
             used_count=used_count,
-            auto_hidden_duplicates_count=len(planned.auto_hidden_duplicate_clusters),
+            auto_hidden_clusters_count=planned.auto_hidden_clusters_count,
+            auto_hidden_hidden_assets_count=planned.auto_hidden_hidden_assets_count,
             auto_hidden_duplicate_clusters=planned.auto_hidden_duplicate_clusters,
-            unused_approved_count=len(planned.unused_approved_asset_ids),
-            unused_approved_asset_ids=planned.unused_approved_asset_ids,
         )
 
 
