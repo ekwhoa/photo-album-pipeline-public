@@ -171,6 +171,20 @@ async def get_pages(book_id: str):
                     summary = f"Map route: {gps_photo_count} photos with location across ~{distinct_locations} spots"
                 else:
                     summary = "Map route (no GPS data)"
+            elif page.page_type.value == "day_intro":
+                day_index = page.payload.get("day_index")
+                display_date = page.payload.get("display_date") or page.payload.get("day_date") or "Day"
+                photo_count = page.payload.get("day_photo_count")
+                summary = f"Day {day_index}: {display_date}"
+                if photo_count is not None:
+                    summary += f" • {photo_count} photos"
+            elif page.page_type.value == "photo_spread":
+                hero_asset_id = page.payload.get("hero_asset_id") or (page.payload.get("asset_ids") or [None])[0]
+                summary = "Photo spread"
+                asset_ids = page.payload.get("asset_ids", [])
+                if not asset_ids and hero_asset_id:
+                    asset_ids = [hero_asset_id]
+                hero_asset_id = hero_asset_id
             else:
                 summary = page.page_type.value
             

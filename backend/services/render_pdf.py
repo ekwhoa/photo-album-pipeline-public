@@ -416,12 +416,73 @@ def _render_day_intro(
         display: flex;
         align-items: center;
         justify-content: center;
+        page-break-after: always;
     ">
         <div class="page-content" style="text-align: center; display: flex; flex-direction: column; gap: 6px;">
             <div style="font-size: 12pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
             <div style="font-size: 24pt; font-family: {theme.title_font_family}; color: {theme.primary_color};">{title}</div>
             {f'<div style="font-size: 12pt; color: {theme.secondary_color};">{photos}</div>' if photos else ''}
         </div>
+    </div>
+    """
+
+def _render_photo_spread(
+    layout: PageLayout,
+    assets: Dict[str, Asset],
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+    media_root: str,
+    mode: str,
+    media_base_url: str | None,
+) -> str:
+    """Render a full-bleed photo spread page."""
+    bg_color = layout.background_color or theme.background_color
+    spread_slot = getattr(layout, "spread_slot", None)
+    asset_id = None
+    for elem in layout.elements:
+        if elem.asset_id:
+            asset_id = elem.asset_id
+            break
+    if not asset_id and layout.elements and layout.elements[0].image_path:
+        # fallback if image_path set directly
+        img_path = layout.elements[0].image_path
+    else:
+        img_path = None
+
+    if asset_id:
+        asset = assets.get(asset_id)
+        if asset:
+            normalized_path = asset.file_path.replace("\\", "/")
+            if mode == "pdf":
+                candidate_path = Path(normalized_path)
+                if not candidate_path.is_absolute():
+                    candidate_path = Path(media_root) / candidate_path
+                img_path = candidate_path.resolve().as_uri()
+            else:
+                base = media_base_url.rstrip("/") if media_base_url else "/media"
+                img_path = f"{base}/{normalized_path}"
+
+    if not img_path:
+        return f"""
+    <div class="page" style="width:{width_mm}mm;height:{height_mm}mm;background:{bg_color};display:flex;align-items:center;justify-content:center;page-break-after: always;">
+        <div class="text-sm text-muted-foreground">Missing spread image</div>
+    </div>
+    """
+
+    # Use background positioning to clearly split the image across the spread.
+    position = "left center" if spread_slot == "left" else "right center"
+
+    return f"""
+    <div class="page" style="position:relative;width:{width_mm}mm;height:{height_mm}mm;background:{bg_color};page-break-after: always;overflow:hidden;">
+        <div style="
+            width:100%;
+            height:100%;
+            background-image:url('{img_path}');
+            background-size:200% 100%;
+            background-position:{position};
+            background-repeat:no-repeat;
+        "></div>
     </div>
     """
 
@@ -583,6 +644,8 @@ def _render_page_html(
         return _render_photo_grid_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.DAY_INTRO:
         return _render_day_intro(layout, theme, width_mm, height_mm)
+    if layout.page_type == PageType.PHOTO_SPREAD:
+        return _render_photo_spread(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
 
     bg_color = layout.background_color or theme.background_color
     

@@ -45,6 +45,7 @@ class PageType(str, Enum):
     PHOTO_GRID = "photo_grid"
     BACK_COVER = "back_cover"
     DAY_INTRO = "day_intro"
+    PHOTO_SPREAD = "photo_spread"
     
     # Future page types (structure only)
     MAP_ROUTE = "map_route"
@@ -134,12 +135,14 @@ class Page:
     index: int
     page_type: PageType
     payload: Dict[str, Any] = field(default_factory=dict)
+    spread_slot: Optional[str] = None  # "left" | "right" for photo_spread pages
     
     def to_dict(self) -> Dict[str, Any]:
         return {
             "index": self.index,
             "page_type": self.page_type.value,
             "payload": self.payload,
+            "spread_slot": self.spread_slot,
         }
 
 
@@ -314,3 +317,4 @@ class PageLayout:
     page_type: PageType
     background_color: Optional[str] = None
     elements: List[LayoutRect] = field(default_factory=list)
+    spread_slot: Optional[str] = None  # For photo_spread pages ("left"|"right")

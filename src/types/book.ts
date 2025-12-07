@@ -6,6 +6,8 @@ export type AssetType = 'photo' | 'ai_image' | 'map_image';
 export type PageType = 
   | 'front_cover'
   | 'photo_grid'
+  | 'day_intro'
+  | 'photo_spread'
   | 'back_cover'
   // Future page types (not implemented yet)
   | 'map_route'
@@ -18,6 +20,8 @@ export type PageType =
 export const PAGE_TYPE_LABELS: Record<PageType, string> = {
   front_cover: 'Front Cover',
   photo_grid: 'Photo Grid',
+  day_intro: 'Day Intro',
+  photo_spread: 'Photo Spread',
   back_cover: 'Back Cover',
   map_route: 'Map Route',
   spotlight: 'Spotlight',

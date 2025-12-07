@@ -60,6 +60,15 @@ class DedupeDebugResponse(BaseModel):
     auto_hidden_duplicate_clusters: List[dict]
 
 
+class UsageDebugResponse(BaseModel):
+    book_id: str
+    approved_asset_ids: List[str]
+    used_asset_ids: List[str]
+    hidden_asset_ids: List[str]
+    missing_asset_ids: List[str]
+    pages: List[dict]
+
+
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
 async def dedupe_debug(book_id: str):
     """Return dedupe metadata for a book without altering existing endpoints."""
@@ -91,6 +100,69 @@ async def dedupe_debug(book_id: str):
             auto_hidden_clusters_count=planned.auto_hidden_clusters_count,
             auto_hidden_hidden_assets_count=planned.auto_hidden_hidden_assets_count,
             auto_hidden_duplicate_clusters=planned.auto_hidden_duplicate_clusters,
+        )
+
+
+@router.get("/{book_id}/usage_debug", response_model=UsageDebugResponse)
+async def usage_debug(book_id: str):
+    """Debug endpoint: show asset usage (approved/used/hidden/missing) plus page summaries."""
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        approved_assets = assets_repo.list_assets(session, book_id, status=None)
+        approved_ids = [a.id for a in approved_assets]
+
+        timeline_service = TimelineService()
+        days = timeline_service.organize_assets_by_day(approved_assets)
+
+        planned = plan_book(
+            book_id=book.id,
+            title=book.title,
+            size=book.size,
+            days=days,
+            assets=approved_assets,
+        )
+
+        # Collect used asset IDs from all pages
+        used_ids: set[str] = set()
+        for page in planned.get_all_pages():
+            payload_ids = page.payload.get("asset_ids") or []
+            hero_id = page.payload.get("hero_asset_id")
+            for aid in payload_ids:
+                used_ids.add(aid)
+            if hero_id:
+                used_ids.add(hero_id)
+
+        hidden_ids = {
+            hid
+            for cluster in planned.auto_hidden_duplicate_clusters
+            for hid in cluster.get("hidden_asset_ids", [])
+        }
+        missing_ids = sorted(list(set(approved_ids) - used_ids - hidden_ids))
+
+        pages_debug = [
+            {
+                "index": p.index,
+                "page_type": p.page_type.value,
+                "asset_ids": p.payload.get("asset_ids") or [],
+                "hero_asset_id": p.payload.get("hero_asset_id"),
+                "spread_slot": p.spread_slot,
+            }
+            for p in planned.get_all_pages()
+        ]
+
+        print("[usage_debug] missing asset ids:", missing_ids)
+        print("[usage_debug] last pages:", pages_debug[-5:])
+
+        return UsageDebugResponse(
+            book_id=book.id,
+            approved_asset_ids=approved_ids,
+            used_asset_ids=sorted(list(used_ids)),
+            hidden_asset_ids=sorted(list(hidden_ids)),
+            missing_asset_ids=missing_ids,
+            pages=pages_debug,
         )
 
 

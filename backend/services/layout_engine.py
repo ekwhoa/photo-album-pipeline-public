@@ -338,6 +338,37 @@ def layout_day_intro(page: Page, context: RenderContext) -> PageLayout:
     )
 
 
+@register_layout(PageType.PHOTO_SPREAD)
+def layout_photo_spread(page: Page, context: RenderContext) -> PageLayout:
+    """Full-bleed single photo spread page."""
+    width = context.page_width_mm
+    height = context.page_height_mm
+    hero_id = (
+        page.payload.get("hero_asset_id")
+        or (page.payload.get("asset_ids") or [None])[0]
+    )
+
+    elements: List[LayoutRect] = []
+    if hero_id:
+        elements.append(
+            LayoutRect(
+                x_mm=0,
+                y_mm=0,
+                width_mm=width,
+                height_mm=height,
+                asset_id=hero_id,
+            )
+        )
+
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=context.theme.background_color,
+        elements=elements,
+        spread_slot=page.spread_slot,
+    )
+
+
 @register_layout(PageType.MAP_ROUTE)
 def layout_map_route(page: Page, context: RenderContext) -> PageLayout:
     """Text-only layout for map route stats."""

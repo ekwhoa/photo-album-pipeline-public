@@ -135,6 +135,7 @@ def plan_book(
     interior_pages: List[Page] = []
     current_index = interior_start_index
     day_intro_pages_count = 0
+    spread_used = False
     for day_index, day_date, day_ids in day_asset_sets:
         day_photo_count = len(day_ids)
         display_date = day_date.strftime("%B %d, %Y") if day_date else None
@@ -152,9 +153,10 @@ def plan_book(
             )
         )
         current_index += 1
-        grids = _create_photo_grid_pages(day_ids, photos_per_page, asset_lookup, start_index=current_index)
-        interior_pages.extend(grids)
-        current_index += len(grids)
+        day_pages, current_index, spread_used = _build_photo_pages_with_optional_spread(
+            day_ids, photos_per_page, asset_lookup, current_index, spread_used
+        )
+        interior_pages.extend(day_pages)
 
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
@@ -184,11 +186,14 @@ def plan_book(
     used_count = len(used_ids)
     auto_hidden_clusters_count = len(dedup_summary.get("clusters", []))
     auto_hidden_hidden_assets_count = len(hidden_ids)
+    missing_used = considered_ids - used_ids - hidden_ids
 
     if approved_count != used_count + auto_hidden_hidden_assets_count:
         print(
             f"[planner][warn] count mismatch: approved={approved_count} used={used_count} hidden_assets={auto_hidden_hidden_assets_count}"
         )
+    if missing_used:
+        print(f"[planner][warn] missing in pages (considered but unused): {missing_used}")
 
     print(
         f"[planner] Assets: approved={approved_count} considered={considered_count} "
@@ -207,6 +212,27 @@ def plan_book(
         },
     )
     
+    # Debug: print first/last few pages with asset ids for inspection
+    def _page_summary(page: Page) -> str:
+        asset_ids = page.payload.get("asset_ids") or []
+        hero = page.payload.get("hero_asset_id")
+        if hero and hero not in asset_ids:
+            asset_ids = [hero] + list(asset_ids)
+        return f"{page.index}:{page.page_type.value}:{asset_ids}"
+
+    full_pages: List[Page] = []
+    if front_cover:
+        full_pages.append(front_cover)
+    full_pages.extend(all_interior_pages)
+    if back_cover:
+        full_pages.append(back_cover)
+
+    first_pages = full_pages[:5]
+    last_pages = full_pages[-5:] if len(full_pages) > 5 else []
+    print("[planner] First pages:", [_page_summary(p) for p in first_pages])
+    if last_pages:
+        print("[planner] Last pages:", [_page_summary(p) for p in last_pages])
+
     return Book(
         id=book_id,
         title=title,
@@ -418,6 +444,134 @@ def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) 
         flush_day(current_day_assets)
 
     return kept, {"dropped": dropped, "clusters": clusters}
+
+
+def _build_photo_pages_with_optional_spread(
+    asset_ids: List[str],
+    photos_per_page: int,
+    asset_lookup: Dict[str, Asset],
+    start_index: int,
+    spread_used: bool,
+) -> Tuple[List[Page], int, bool]:
+    pages: List[Page] = []
+    if not asset_ids:
+        return pages, start_index, spread_used
+
+    spread_hero_id = asset_ids[0] if asset_ids else None
+    i = 0
+    current_index = start_index
+
+    while i < len(asset_ids):
+        current_side = "left" if current_index % 2 == 0 else "right"
+        aid = asset_ids[i]
+
+        # If hero is on right, finish sheet with a grid to flip
+        if (
+            not spread_used
+            and spread_hero_id
+            and aid == spread_hero_id
+            and current_side == "right"
+        ):
+            batch: List[str] = []
+            j = i
+            while j < len(asset_ids) and len(batch) < photos_per_page:
+                if asset_ids[j] == spread_hero_id:
+                    j += 1
+                    continue
+                batch.append(asset_ids[j])
+                j += 1
+            if batch:
+                pages.append(
+                    Page(
+                        index=current_index,
+                        page_type=PageType.PHOTO_GRID,
+                        payload={
+                            "asset_ids": batch,
+                            "layout": _select_grid_layout(len(batch), photos_per_page),
+                        },
+                    )
+                )
+                current_index += 1
+                # Keep hero at current i so the next iteration (now left side) can place the spread
+                continue
+            # No other photos to fill the right page; fall back to a single grid page
+            pages.append(
+                Page(
+                    index=current_index,
+                    page_type=PageType.PHOTO_GRID,
+                    payload={
+                        "asset_ids": [spread_hero_id],
+                        "layout": _select_grid_layout(1, photos_per_page),
+                    },
+                )
+            )
+            current_index += 1
+            i = j  # consume hero
+            spread_used = True  # avoid reprocessing as spread
+            continue
+
+        # Insert spread on left when available
+        if (
+            not spread_used
+            and spread_hero_id
+            and aid == spread_hero_id
+            and current_side == "left"
+        ):
+            pages.append(
+                Page(
+                    index=current_index,
+                    page_type=PageType.PHOTO_SPREAD,
+                    payload={
+                        "asset_ids": [spread_hero_id],
+                        "hero_asset_id": spread_hero_id,
+                    },
+                    spread_slot="left",
+                )
+            )
+            pages.append(
+                Page(
+                    index=current_index + 1,
+                    page_type=PageType.PHOTO_SPREAD,
+                    payload={
+                        "asset_ids": [spread_hero_id],
+                        "hero_asset_id": spread_hero_id,
+                    },
+                    spread_slot="right",
+                )
+            )
+            spread_used = True
+            current_index += 2
+            i += 1
+            continue
+
+        # Skip hero in grids
+        if spread_hero_id and aid == spread_hero_id and not spread_used:
+            i += 1
+            continue
+
+        # Normal grid page
+        batch: List[str] = []
+        while i < len(asset_ids) and len(batch) < photos_per_page:
+            if spread_hero_id and not spread_used and asset_ids[i] == spread_hero_id:
+                i += 1
+                continue
+            batch.append(asset_ids[i])
+            i += 1
+
+        if batch:
+            pages.append(
+                Page(
+                    index=current_index,
+                    page_type=PageType.PHOTO_GRID,
+                    payload={
+                        "asset_ids": batch,
+                        "layout": _select_grid_layout(len(batch), photos_per_page),
+                    },
+                )
+            )
+            current_index += 1
+
+    return pages, current_index, spread_used
 
 
 def _select_cluster_hero(cluster: List[str], asset_lookup: Dict[str, Asset]) -> str:
