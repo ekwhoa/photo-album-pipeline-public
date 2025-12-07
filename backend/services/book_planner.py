@@ -171,6 +171,11 @@ def plan_book(
         day_segments, _, _, _, _ = _build_segments_for_day(ordered_assets_for_segments)
         segment_count = len(day_segments)
         profile = compute_day_layout_profile(day_photo_count, segment_count)
+        asset_to_segment: Dict[str, int] = {}
+        for seg in day_segments:
+            idx_seg = seg.get("segment_index")
+            for aid in seg.get("asset_ids", []):
+                asset_to_segment[aid] = idx_seg
         display_date = day_date.strftime("%B %d, %Y") if day_date else None
         day_intro_pages_count += 1
         interior_pages.append(
@@ -216,6 +221,7 @@ def plan_book(
         full_page_photos_for_day = _normalize_day_photo_pages(
             day_pages, profile, full_page_photos_for_day
         )
+        chosen_grid_pages = _apply_segment_grid_variants(day_pages, asset_to_segment)
         interior_pages.extend(day_pages)
 
         print(
@@ -223,6 +229,11 @@ def plan_book(
             f"photos={day_photo_count} segments={segment_count} "
             f"max_full_page={profile.max_full_page_photos} full_page_used={full_page_photos_for_day}"
         )
+        if chosen_grid_pages:
+            print(
+                f"[planner/grid-variant] day_index={day_index} segments={segment_count} "
+                f"grid_4_simple_pages={chosen_grid_pages}"
+            )
 
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
@@ -679,6 +690,44 @@ def _normalize_day_photo_pages(day_pages: List[Page], profile: DayLayoutProfile,
         1 for p in day_pages if p.page_type in (PageType.FULL_PAGE_PHOTO, PageType.PHOTO_FULL)
     )
     return full_used + full_pages_in_day
+
+
+def _apply_segment_grid_variants(
+    day_pages: List[Page],
+    asset_to_segment: Dict[str, int],
+) -> List[int]:
+    """
+    For each day, choose at most one 4-photo grid per segment to use the
+    grid_4_simple layout variant (hero + three). All other grids default.
+    """
+    chosen_segments: set[int] = set()
+    chosen_pages: List[int] = []
+
+    for page in day_pages:
+        if page.page_type != PageType.PHOTO_GRID:
+            continue
+        payload = page.payload or {}
+        asset_ids = payload.get("asset_ids") or []
+        # default baseline
+        payload["layout_variant"] = "default"
+        if len(asset_ids) != 4:
+            page.payload = payload
+            continue
+        segments = {asset_to_segment.get(aid) for aid in asset_ids}
+        segments.discard(None)
+        if len(segments) != 1:
+            page.payload = payload
+            continue
+        seg_idx = next(iter(segments))
+        if seg_idx in chosen_segments:
+            page.payload = payload
+            continue
+        payload["layout_variant"] = "grid_4_simple"
+        chosen_segments.add(seg_idx)
+        chosen_pages.append(page.index)
+        page.payload = payload
+
+    return chosen_pages
 
 
 # ---------------------------
