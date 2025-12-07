@@ -114,3 +114,39 @@
     text-wrap: balance;
   }
 }
+
+@layer components {
+  .spread-frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    padding-top: 0;
+    overflow: hidden;
+    background: #000;
+  }
+  .spread-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 200%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .spread-img-left {
+    transform: translateX(0);
+  }
+  .spread-img-right {
+    transform: translateX(-50%);
+  }
+  .photo-full-inner {
+    max-width: 90%;
+    max-height: 90%;
+    margin: 0 auto;
+  }
+  .photo-full-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 0.5rem;
+  }
+}

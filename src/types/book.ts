@@ -8,6 +8,8 @@ export type PageType =
   | 'photo_grid'
   | 'day_intro'
   | 'photo_spread'
+  | 'photo_full'
+  | 'full_page_photo'
   | 'back_cover'
   // Future page types (not implemented yet)
   | 'map_route'
@@ -22,6 +24,8 @@ export const PAGE_TYPE_LABELS: Record<PageType, string> = {
   photo_grid: 'Photo Grid',
   day_intro: 'Day Intro',
   photo_spread: 'Photo Spread',
+  photo_full: 'Full Page Photo',
+  full_page_photo: 'Full Page Photo',
   back_cover: 'Back Cover',
   map_route: 'Map Route',
   spotlight: 'Spotlight',

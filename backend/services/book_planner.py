@@ -136,6 +136,7 @@ def plan_book(
     current_index = interior_start_index
     day_intro_pages_count = 0
     spread_used = False
+    full_hero_count = 0
     for day_index, day_date, day_ids in day_asset_sets:
         day_photo_count = len(day_ids)
         display_date = day_date.strftime("%B %d, %Y") if day_date else None
@@ -153,8 +154,29 @@ def plan_book(
             )
         )
         current_index += 1
+        # Optional full-page hero for the day
+        day_remaining = list(day_ids)
+        if (
+            len(day_remaining) >= 5
+            and full_hero_count < 2
+        ):
+            hero_full = _select_full_page_hero(day_remaining, asset_lookup)
+            if hero_full:
+                day_remaining = [aid for aid in day_remaining if aid != hero_full]
+                interior_pages.append(
+                    Page(
+                        index=current_index,
+                        page_type=PageType.PHOTO_FULL,
+                        payload={
+                            "asset_ids": [hero_full],
+                            "hero_asset_id": hero_full,
+                        },
+                    )
+                )
+                current_index += 1
+                full_hero_count += 1
         day_pages, current_index, spread_used = _build_photo_pages_with_optional_spread(
-            day_ids, photos_per_page, asset_lookup, current_index, spread_used
+            day_remaining, photos_per_page, asset_lookup, current_index, spread_used
         )
         interior_pages.extend(day_pages)
 
@@ -587,6 +609,34 @@ def _select_cluster_hero(cluster: List[str], asset_lookup: Dict[str, Asset]) -> 
         return area, ts
 
     return max(cluster, key=score)
+
+
+def _select_full_page_hero(asset_ids: List[str], asset_lookup: Dict[str, Asset]) -> Optional[str]:
+    """
+    Choose a full-page hero for a day.
+    Prefer portrait or near-square assets if metadata is available; otherwise pick first.
+    """
+    if not asset_ids:
+        return None
+    portrait_ids: List[str] = []
+    square_ids: List[str] = []
+    others: List[str] = []
+    for aid in asset_ids:
+        asset = asset_lookup.get(aid)
+        if not asset or not asset.metadata or not asset.metadata.width or not asset.metadata.height:
+            others.append(aid)
+            continue
+        w, h = asset.metadata.width, asset.metadata.height
+        if h >= w:
+            portrait_ids.append(aid)
+        elif abs(w - h) / max(w, h) < 0.1:
+            square_ids.append(aid)
+        else:
+            others.append(aid)
+    for group in (portrait_ids, square_ids, others):
+        if group:
+            return group[0]
+    return asset_ids[0]
 
 
 def _create_trip_summary_page(

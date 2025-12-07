@@ -369,6 +369,37 @@ def layout_photo_spread(page: Page, context: RenderContext) -> PageLayout:
     )
 
 
+@register_layout(PageType.PHOTO_FULL)
+def layout_photo_full(page: Page, context: RenderContext) -> PageLayout:
+    """Full-page single photo (hero) layout."""
+    width = context.page_width_mm
+    height = context.page_height_mm
+    margin = context.theme.page_margin_mm
+    hero_id = (
+        page.payload.get("hero_asset_id")
+        or (page.payload.get("asset_ids") or [None])[0]
+    )
+
+    elements: List[LayoutRect] = []
+    if hero_id:
+        elements.append(
+            LayoutRect(
+                x_mm=margin,
+                y_mm=margin,
+                width_mm=width - 2 * margin,
+                height_mm=height - 2 * margin,
+                asset_id=hero_id,
+            )
+        )
+
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=context.theme.background_color,
+        elements=elements,
+    )
+
+
 @register_layout(PageType.MAP_ROUTE)
 def layout_map_route(page: Page, context: RenderContext) -> PageLayout:
     """Text-only layout for map route stats."""
