@@ -158,6 +158,7 @@ def plan_book(
     full_hero_count = 0
     for day_index, day_date, day_ids in day_asset_sets:
         day_photo_count = len(day_ids)
+        full_page_photos_for_day = 0
         ordered_assets_for_segments = [asset_lookup[aid] for aid in day_ids if aid in asset_lookup]
         ordered_assets_for_segments.sort(
             key=lambda a: (
@@ -168,7 +169,6 @@ def plan_book(
         day_segments, _, _, _, _ = _build_segments_for_day(ordered_assets_for_segments)
         segment_count = len(day_segments)
         profile = compute_day_layout_profile(day_photo_count, segment_count)
-        full_page_photos_for_day = 0
         display_date = day_date.strftime("%B %d, %Y") if day_date else None
         day_intro_pages_count += 1
         interior_pages.append(
@@ -210,7 +210,6 @@ def plan_book(
         day_pages, current_index, spread_used = _build_photo_pages_with_optional_spread(
             day_remaining, photos_per_page, asset_lookup, current_index, spread_used
         )
-
         full_page_photos_for_day = _normalize_day_photo_pages(
             day_pages, profile, full_page_photos_for_day
         )
@@ -657,7 +656,6 @@ def _normalize_day_photo_pages(day_pages: List[Page], profile: DayLayoutProfile,
     by the day's profile and cap.
     Returns updated full-page count.
     """
-    full_count = full_used
     for page in day_pages:
         if page.page_type != PageType.PHOTO_GRID:
             continue
@@ -667,8 +665,11 @@ def _normalize_day_photo_pages(day_pages: List[Page], profile: DayLayoutProfile,
             page.page_type = PageType.FULL_PAGE_PHOTO
             page.payload["hero_asset_id"] = aid
             print(f"[planner][info] converted single-photo grid to full page: {aid}")
-            full_count += 1
-    return full_count
+    # Recompute full-page count from final day pages plus any already used
+    full_pages_in_day = sum(
+        1 for p in day_pages if p.page_type in (PageType.FULL_PAGE_PHOTO, PageType.PHOTO_FULL)
+    )
+    return full_used + full_pages_in_day
 
 
 # ---------------------------
