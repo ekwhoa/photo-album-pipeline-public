@@ -32,6 +32,7 @@ class PagePreviewResponse(BaseModel):
     summary: str
     asset_ids: List[str] | None = None
     hero_asset_id: str | None = None
+    layout_variant: str | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -152,11 +153,13 @@ async def get_pages(book_id: str):
             # Generate summary based on page type
             asset_ids = None
             hero_asset_id = None
+            layout_variant = None
             if page.page_type.value == "front_cover":
                 summary = f"Title: {page.payload.get('title', 'Untitled')}"
                 hero_asset_id = page.payload.get("hero_asset_id")
             elif page.page_type.value == "photo_grid":
                 asset_ids = page.payload.get("asset_ids", [])
+                layout_variant = page.payload.get("layout_variant")
                 summary = f"{len(asset_ids)} photos"
             elif page.page_type.value == "back_cover":
                 summary = page.payload.get("text", "Back cover")
@@ -198,6 +201,7 @@ async def get_pages(book_id: str):
                 summary=summary,
                 asset_ids=asset_ids,
                 hero_asset_id=hero_asset_id,
+                layout_variant=layout_variant,
             ))
         
         return previews

@@ -35,6 +35,12 @@ export const PAGE_TYPE_LABELS: Record<PageType, string> = {
   itinerary: 'Itinerary',
 };
 
+export type GridLayoutVariant =
+  | 'grid_4_simple'
+  | 'grid_2up'
+  | 'grid_3up_hero'
+  | 'grid_6_dense';
+
 // Segment debug types
 export interface SegmentDebugSegment {
   segment_index: number;
@@ -57,6 +63,13 @@ export interface BookSegmentDebugResponse {
   total_days: number;
   total_assets: number;
   days: SegmentDebugDay[];
+}
+
+export interface PhotoGridPage {
+  page_type: 'photo_grid';
+  asset_ids: string[];
+  layout?: string;
+  layout_variant?: GridLayoutVariant;
 }
 
 export const BOOK_SIZES = [

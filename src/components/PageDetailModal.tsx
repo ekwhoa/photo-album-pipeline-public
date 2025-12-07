@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { Asset, PagePreview } from '@/lib/api';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
+import clsx from 'clsx';
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   front_cover: 'Front Cover',
@@ -93,6 +94,8 @@ export function PageDetailModal({
             <div className="spread-frame w-full">
               <img src={heroSrc} alt="" className={spreadSlot === 'left' ? 'spread-img spread-img-left' : 'spread-img spread-img-right'} />
             </div>
+          ) : page.page_type === 'photo_grid' ? (
+            <PhotoGridDetail page={page} assets={assets} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center bg-muted/30 rounded-lg p-4">
               <img src={heroSrc} alt="" className="photo-full-image max-h-[70vh]" />
@@ -129,5 +132,63 @@ export function PageDetailModal({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PhotoGridDetail({ page, assets }: { page: PagePreview; assets: Asset[] }) {
+  const variant = (page as any).layout_variant || 'grid_4_simple';
+  const gridAssets = (page.asset_ids || [])
+    .map((id) => assets.find((a) => a.id === id))
+    .filter(Boolean) as Asset[];
+
+  const renderImage = (asset: Asset, extraClass = '') => {
+    const src = asset.thumbnail_path ? getThumbnailUrl(asset) : getAssetUrl(asset);
+    return (
+      <div className={clsx('w-full h-full overflow-hidden rounded-lg bg-muted', extraClass)}>
+        <img src={src} alt={asset.metadata?.taken_at || ''} className="w-full h-full object-cover" />
+      </div>
+    );
+  };
+
+  if (gridAssets.length === 0) {
+    return (
+      <div className="text-center py-12 space-y-4 bg-muted/30 rounded-lg">
+        <p className="text-muted-foreground">No photos to display for this grid.</p>
+      </div>
+    );
+  }
+
+  if (variant === 'grid_2up' && gridAssets.length >= 2) {
+    return (
+      <div className="grid grid-cols-2 gap-2 bg-muted/30 p-3 rounded-lg">
+        {gridAssets.slice(0, 2).map((asset) => renderImage(asset))}
+      </div>
+    );
+  }
+
+  if (variant === 'grid_3up_hero' && gridAssets.length >= 3) {
+    return (
+      <div className="grid grid-cols-2 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg min-h-[360px]">
+        <div className="row-span-2">{renderImage(gridAssets[0])}</div>
+        {renderImage(gridAssets[1])}
+        {renderImage(gridAssets[2])}
+      </div>
+    );
+  }
+
+  if (variant === 'grid_6_dense' && gridAssets.length >= 5) {
+    const slice = gridAssets.slice(0, 6);
+    return (
+      <div className="grid grid-cols-3 grid-rows-2 gap-1 bg-muted/30 p-3 rounded-lg">
+        {slice.map((asset) => renderImage(asset))}
+      </div>
+    );
+  }
+
+  // Default 4-up
+  return (
+    <div className="grid grid-cols-2 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg min-h-[360px]">
+      {gridAssets.slice(0, 4).map((asset) => renderImage(asset))}
+    </div>
   );
 }

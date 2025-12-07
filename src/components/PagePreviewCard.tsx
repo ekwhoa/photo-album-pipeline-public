@@ -64,6 +64,8 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc && spreadSlot) ? (
             <SpreadImage src={heroSrc} slot={spreadSlot} />
+          ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
+            <PhotoGridPreview page={page} assetMap={assetMap} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center p-2">
               <img src={heroSrc} alt="" className="photo-full-image" />
@@ -111,6 +113,65 @@ function SpreadImage({ src, slot }: { src: string; slot: 'left' | 'right' }) {
   return (
     <div className="spread-frame">
       <img src={src} alt="" className={cls} />
+    </div>
+  );
+}
+
+function PhotoGridPreview({ page, assetMap }: { page: PagePreview; assetMap: Record<string, Asset> }) {
+  const variant = (page as any).layout_variant || 'grid_4_simple';
+  const assets = (page.asset_ids || [])
+    .map((id) => assetMap[id])
+    .filter(Boolean) as Asset[];
+
+  const renderImg = (asset: Asset, extraClass = '') => {
+    const src = asset.thumbnail_path ? getThumbnailUrl(asset) : getAssetUrl(asset);
+    return (
+      <div className={`w-full h-full overflow-hidden rounded-md bg-muted ${extraClass}`}>
+        <img src={src} alt="" className="w-full h-full object-cover" />
+      </div>
+    );
+  };
+
+  if (assets.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground px-4 text-center">
+        <Grid3X3 className="h-4 w-4" />
+        <span className="font-medium text-foreground">Photo Grid</span>
+      </div>
+    );
+  }
+
+  if (variant === 'grid_2up' && assets.length >= 2) {
+    return (
+      <div className="grid grid-cols-2 gap-1 w-full h-full p-1">
+        {assets.slice(0, 2).map((asset) => renderImg(asset))}
+      </div>
+    );
+  }
+
+  if (variant === 'grid_3up_hero' && assets.length >= 3) {
+    return (
+      <div className="grid grid-cols-2 grid-rows-2 gap-1 w-full h-full p-1">
+        <div className="row-span-2">{renderImg(assets[0])}</div>
+        {renderImg(assets[1])}
+        {renderImg(assets[2])}
+      </div>
+    );
+  }
+
+  if (variant === 'grid_6_dense' && assets.length >= 5) {
+    const slice = assets.slice(0, 6);
+    return (
+      <div className="grid grid-cols-3 grid-rows-2 gap-0.5 w-full h-full p-1">
+        {slice.map((asset) => renderImg(asset))}
+      </div>
+    );
+  }
+
+  // Default 4-up
+  return (
+    <div className="grid grid-cols-2 grid-rows-2 gap-1 w-full h-full p-1">
+      {assets.slice(0, 4).map((asset) => renderImg(asset))}
     </div>
   );
 }

@@ -642,6 +642,7 @@ def _build_photo_pages_with_optional_spread(
                         payload={
                             "asset_ids": batch,
                             "layout": _select_grid_layout(len(batch), photos_per_page),
+                            "layout_variant": choose_grid_layout_variant(len(batch)),
                         },
                     )
                 )
@@ -982,6 +983,20 @@ def _select_grid_layout(photo_count: int, max_photos: int) -> str:
         return "grid_2x3"
     else:
         return "grid_3x3"
+
+
+def choose_grid_layout_variant(photo_count: int) -> str:
+    """
+    Return a layout_variant string for a photo_grid page
+    based on how many photos it contains.
+    """
+    if photo_count == 2:
+        return "grid_2up"
+    if photo_count == 3:
+        return "grid_3up_hero"
+    if photo_count in (5, 6):
+        return "grid_6_dense"
+    return "grid_4_simple"
 
 
 # ============================================
