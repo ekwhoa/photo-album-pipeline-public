@@ -195,8 +195,8 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
   if (variant === 'grid_4_simple' && gridAssets.length >= 4) {
     return (
       <div className="grid grid-cols-3 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg">
-        <div className="col-span-3">{renderImage(gridAssets[0])}</div>
-        {gridAssets.slice(1, 4).map((asset) => renderImage(asset))}
+        {gridAssets.slice(0, 3).map((asset) => renderImage(asset))}
+        <div className="col-span-3">{renderImage(gridAssets[3])}</div>
       </div>
     );
   }

@@ -121,8 +121,12 @@ function SpreadImage({
   alt?: string;
   className?: string;
 }) {
+  const wrapperClassName = ['flex gap-1 w-full', className]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div className={clsx('flex gap-1 w-full', className)}>
+    <div className={wrapperClassName}>
       <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
         <img
           src={src}
