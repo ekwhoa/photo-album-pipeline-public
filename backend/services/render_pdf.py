@@ -5,9 +5,11 @@ Renders the book layouts to a print-ready PDF file.
 Uses HTML/CSS rendering via WeasyPrint for flexibility.
 """
 import os
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
+logger = logging.getLogger(__name__)
 
 
 def get_pdf_layout_variant(page: Any, photo_count: int) -> str:
@@ -114,7 +116,7 @@ def _render_photo_grid_from_elements(
     photo_elements = [elem for elem in layout.elements if elem.asset_id or elem.image_path or elem.image_url]
     photo_count = len(photo_elements)
     variant = get_pdf_layout_variant(layout, photo_count)
-    print(f"[PDF_DEBUG GRID] page_index={layout.page_index} variant={variant} photo_count={photo_count}")
+    logger.debug("[render_pdf] grid page index=%s variant=%s photo_count=%s mode=%s", layout.page_index, variant, photo_count, mode)
 
     bg_color = layout.background_color or theme.background_color
     elements_html = []
@@ -201,7 +203,6 @@ def _render_photo_grid_from_elements(
         page-break-after: always;
     ">
         {''.join(elements_html)}
-        <div style="position:absolute; bottom:2mm; left:4mm; font-size:7pt; color:#444;">variant: {variant}</div>
     </div>
     """
 
@@ -221,10 +222,13 @@ def _generate_book_html(
     
     pages_html = []
     for layout in layouts:
-        print(
-            f"[render_pdf][debug] page index={layout.page_index} type={layout.page_type} "
-            f"hero={layout.payload.get('hero_asset_id') if hasattr(layout, 'payload') else None} "
-            f"assets={layout.payload.get('asset_ids') if hasattr(layout, 'payload') else None}"
+        logger.debug(
+            "[render_pdf] page index=%s type=%s hero=%s assets=%s layout_variant=%s",
+            layout.page_index,
+            layout.page_type,
+            layout.payload.get('hero_asset_id') if hasattr(layout, 'payload') else None,
+            layout.payload.get('asset_ids') if hasattr(layout, 'payload') else None,
+            getattr(layout, "layout_variant", None),
         )
         page_html = _render_page_html(
             layout,
