@@ -179,8 +179,8 @@ function PhotoGridPreview({ page, assetMap }: { page: BookPage; assetMap: Record
   if (variant === 'grid_4_simple' && assets.length >= 4) {
     return (
       <div className="grid grid-cols-3 grid-rows-2 gap-1 w-full h-full p-1">
-        <div className="col-span-3">{renderImg(assets[0])}</div>
-        {assets.slice(1, 4).map((asset) => renderImg(asset))}
+        {assets.slice(0, 3).map((asset) => renderImg(asset))}
+        <div className="col-span-3">{renderImg(assets[3])}</div>
       </div>
     );
   }
