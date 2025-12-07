@@ -23,12 +23,14 @@ const SpreadImage: React.FC<SpreadImageProps> = ({ heroSrc, mode = 'thumb' }) =>
       <img
         src={heroSrc}
         alt="Photo spread left page"
-        className={`${imgBase} object-left`}
+        className={`${imgBase} object-cover`}
+        style={{ objectPosition: 'left center', width: '200%' }}
       />
       <img
         src={heroSrc}
         alt="Photo spread right page"
-        className={`${imgBase} object-right`}
+        className={`${imgBase} object-cover`}
+        style={{ objectPosition: 'right center', width: '200%' }}
       />
     </div>
   );
