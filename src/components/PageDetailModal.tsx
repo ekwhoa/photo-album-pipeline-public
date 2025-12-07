@@ -211,26 +211,12 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
 
 function SpreadDetail({ src, alt }: { src: string; alt?: string }) {
   return (
-    <div className="w-full flex justify-center">
-      <div className="w-full max-w-4xl">
-        <div className="flex gap-2">
-          <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
-            <img
-              src={src}
-              alt={alt || 'Left page'}
-              className="h-full w-full object-cover"
-              style={{ objectPosition: 'left center' }}
-            />
-          </div>
-          <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
-            <img
-              src={src}
-              alt={alt || 'Right page'}
-              className="h-full w-full object-cover"
-              style={{ objectPosition: 'right center' }}
-            />
-          </div>
-        </div>
+    <div className="w-full flex justify-center gap-4">
+      <div className="spread-frame max-w-3xl flex-1">
+        <img src={src} alt={alt || 'Left page'} className="spread-img spread-img-left" />
+      </div>
+      <div className="spread-frame max-w-3xl flex-1">
+        <img src={src} alt={alt || 'Right page'} className="spread-img spread-img-right" />
       </div>
     </div>
   );
