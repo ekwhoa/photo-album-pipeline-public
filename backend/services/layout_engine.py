@@ -149,6 +149,7 @@ def layout_photo_grid(page: Page, context: RenderContext) -> PageLayout:
     
     asset_ids = page.payload.get("asset_ids", [])
     layout_type = page.payload.get("layout", "grid_2x2")
+    layout_variant = page.payload.get("layout_variant") or "default"
     
     elements = []
     
@@ -180,19 +181,44 @@ def layout_photo_grid(page: Page, context: RenderContext) -> PageLayout:
             ))
     
     elif layout_type == "grid_2x2":
-        # 2x2 grid
-        photo_width = (content_width - gap) / 2
-        photo_height = (content_height - gap) / 2
-        for i, asset_id in enumerate(asset_ids[:4]):
-            row = i // 2
-            col = i % 2
+        # 2x2 grid, with optional hero + three variant
+        if layout_variant == "grid_4_simple" and len(asset_ids) >= 4:
+            hero_height = content_height * 0.55
+            thumb_height = content_height - hero_height - gap
+            thumb_width = (content_width - 2 * gap) / 3
+
+            # Hero (top)
             elements.append(LayoutRect(
-                x_mm=margin + col * (photo_width + gap),
-                y_mm=margin + row * (photo_height + gap),
-                width_mm=photo_width,
-                height_mm=photo_height,
-                asset_id=asset_id,
+                x_mm=margin,
+                y_mm=margin + thumb_height + gap,
+                width_mm=content_width,
+                height_mm=hero_height,
+                asset_id=asset_ids[0],
             ))
+
+            # Three thumbs on bottom row
+            for i, asset_id in enumerate(asset_ids[1:4]):
+                elements.append(LayoutRect(
+                    x_mm=margin + i * (thumb_width + gap),
+                    y_mm=margin,
+                    width_mm=thumb_width,
+                    height_mm=thumb_height,
+                    asset_id=asset_id,
+                ))
+        else:
+            # 2x2 grid
+            photo_width = (content_width - gap) / 2
+            photo_height = (content_height - gap) / 2
+            for i, asset_id in enumerate(asset_ids[:4]):
+                row = i // 2
+                col = i % 2
+                elements.append(LayoutRect(
+                    x_mm=margin + col * (photo_width + gap),
+                    y_mm=margin + row * (photo_height + gap),
+                    width_mm=photo_width,
+                    height_mm=photo_height,
+                    asset_id=asset_id,
+                ))
     
     elif layout_type == "grid_2x3":
         # 2 columns, 3 rows
@@ -229,6 +255,7 @@ def layout_photo_grid(page: Page, context: RenderContext) -> PageLayout:
         page_type=page.page_type,
         background_color=theme.background_color,
         elements=elements,
+        layout_variant=layout_variant,
     )
 
 

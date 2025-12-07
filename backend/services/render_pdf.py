@@ -6,8 +6,28 @@ Uses HTML/CSS rendering via WeasyPrint for flexibility.
 """
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
+
+
+def get_pdf_layout_variant(page: Any, photo_count: int) -> str:
+    """
+    Normalize layout_variant for PDF rendering.
+
+    Prefers top-level layout_variant, falls back to payload,
+    and ultimately defaults to "default". Only honors
+    grid_4_simple when there are exactly 4 photos.
+    """
+    variant = getattr(page, "layout_variant", None)
+    payload = getattr(page, "payload", None)
+    if variant is None and isinstance(payload, dict):
+        variant = payload.get("layout_variant")
+    if not variant:
+        return "default"
+    variant_str = str(variant).strip()
+    if variant_str == "grid_4_simple" and photo_count == 4:
+        return "grid_4_simple"
+    return "default"
 
 
 def render_book_to_pdf(
@@ -80,6 +100,110 @@ def render_book_to_html(
         book, layouts, assets, context, media_root, mode, media_base_url
     )
 
+def _render_photo_grid_from_elements(
+    layout: PageLayout,
+    assets: Dict[str, Asset],
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+    media_root: str,
+    mode: str,
+    media_base_url: str | None,
+) -> str:
+    """Render photo grids using precomputed LayoutRect positions (variant-aware)."""
+    photo_elements = [elem for elem in layout.elements if elem.asset_id or elem.image_path or elem.image_url]
+    photo_count = len(photo_elements)
+    variant = get_pdf_layout_variant(layout, photo_count)
+    print(f"[PDF_DEBUG GRID] page_index={layout.page_index} variant={variant} photo_count={photo_count}")
+
+    bg_color = layout.background_color or theme.background_color
+    elements_html = []
+
+    for elem in layout.elements:
+        img_src = ""
+        if elem.image_path or elem.image_url:
+            if mode == "pdf":
+                candidate = elem.image_path or ""
+                if candidate:
+                    candidate_path = Path(candidate)
+                    if not candidate_path.is_absolute():
+                        candidate_path = Path(media_root) / candidate_path
+                    img_src = candidate_path.resolve().as_uri()
+            else:
+                img_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
+        elif elem.asset_id and elem.asset_id in assets:
+            asset = assets[elem.asset_id]
+            normalized_path = asset.file_path.replace("\\", "/")
+            if mode == "pdf":
+                candidate_path = Path(normalized_path)
+                if not candidate_path.is_absolute():
+                    candidate_path = Path(media_root) / candidate_path
+                img_src = candidate_path.resolve().as_uri()
+            else:
+                base = media_base_url.rstrip("/") if media_base_url else "/media"
+                img_src = f"{base}/{normalized_path}"
+
+        if img_src:
+            elements_html.append(f"""
+                <div style="
+                    position: absolute;
+                    left: {elem.x_mm}mm;
+                    top: {elem.y_mm}mm;
+                    width: {elem.width_mm}mm;
+                    height: {elem.height_mm}mm;
+                    overflow: hidden;
+                    border-radius: 4px;
+                ">
+                    <img src="{img_src}" style="width:100%;height:100%;object-fit:cover;" />
+                </div>
+            """)
+        elif elem.text:
+            color = elem.color or theme.primary_color
+            font_size = elem.font_size or 12
+            elements_html.append(f"""
+                <div style="
+                    position: absolute;
+                    left: {elem.x_mm}mm;
+                    top: {elem.y_mm}mm;
+                    width: {elem.width_mm}mm;
+                    height: {elem.height_mm}mm;
+                    color: {color};
+                    font-size: {font_size}pt;
+                    font-family: {theme.title_font_family if font_size > 14 else theme.font_family};
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                ">
+                    {elem.text}
+                </div>
+            """)
+        elif elem.color:
+            elements_html.append(f"""
+                <div style="
+                    position: absolute;
+                    left: {elem.x_mm}mm;
+                    top: {elem.y_mm}mm;
+                    width: {elem.width_mm}mm;
+                    height: {elem.height_mm}mm;
+                    background: {elem.color};
+                "></div>
+            """)
+
+    return f"""
+    <div class="page photo-grid-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {bg_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+        page-break-after: always;
+    ">
+        {''.join(elements_html)}
+        <div style="position:absolute; bottom:2mm; left:4mm; font-size:7pt; color:#444;">variant: {variant}</div>
+    </div>
+    """
 
 def _generate_book_html(
     book: Book,
@@ -556,144 +680,6 @@ def _render_photo_full(
         </div>
     </div>
     """
-def _render_photo_grid_card(
-    layout: PageLayout,
-    assets: Dict[str, Asset],
-    theme: Theme,
-    width_mm: float,
-    height_mm: float,
-    media_root: str,
-    mode: str,
-    media_base_url: str | None,
-) -> str:
-    """Render photo grid pages with centered column and consistent gutters."""
-    bg_color = layout.background_color or theme.background_color
-
-    # Optional heading if provided in payload (e.g., day label)
-    heading = ""
-    for elem in layout.elements:
-        if elem.text and not heading:
-            heading = elem.text
-            break
-
-    # Build image cells
-    cell_divs: List[str] = []
-    for elem in layout.elements:
-        img_src = ""
-        if elem.image_path or elem.image_url:
-            if mode == "pdf":
-                candidate = elem.image_path or ""
-                if candidate:
-                    candidate_path = Path(candidate)
-                    if not candidate_path.is_absolute():
-                        candidate_path = Path(media_root) / candidate_path
-                    img_src = candidate_path.resolve().as_uri()
-            else:
-                img_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
-        elif elem.asset_id and elem.asset_id in assets:
-            asset = assets[elem.asset_id]
-            normalized_path = asset.file_path.replace("\\", "/")
-            if mode == "pdf":
-                candidate_path = Path(normalized_path)
-                if not candidate_path.is_absolute():
-                    candidate_path = Path(media_root) / candidate_path
-                img_src = candidate_path.resolve().as_uri()
-            else:
-                base = media_base_url.rstrip("/") if media_base_url else "/media"
-                img_src = f"{base}/{normalized_path}"
-
-        if not img_src:
-            continue
-
-        cell_divs.append(f"""
-            <div class="photo-cell">
-                <img src="{img_src}" alt="" />
-            </div>
-        """)
-
-    cells_html = "".join(cell_divs)
-
-    return f"""
-    <div class="page photo-grid-page" style="
-        position: relative;
-        width: {width_mm}mm;
-        height: {height_mm}mm;
-        background: {bg_color};
-        font-family: {theme.font_family};
-        color: {theme.primary_color};
-    ">
-        <style>
-            .photo-grid-page {{
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: flex-start;
-                box-sizing: border-box;
-                padding: 4mm 0;
-            }}
-            .photo-grid-card {{
-                max-width: 190mm;
-                width: 88%;
-                margin: 4mm auto;
-                padding: 6mm;
-                background: {bg_color};
-                border: none;
-                border-radius: 0;
-                box-shadow: none;
-                display: flex;
-                flex-direction: column;
-                gap: 3mm;
-                box-sizing: border-box;
-                max-height: calc(100% - 8mm);
-                overflow: hidden;
-            }}
-            .photo-grid-heading {{
-                font-family: {theme.title_font_family};
-                font-size: 18pt;
-                color: {theme.primary_color};
-                margin: 0;
-                text-align: center;
-            }}
-            .photo-grid {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 3mm;
-                width: 100%;
-                justify-content: center;
-                box-sizing: border-box;
-                align-content: flex-start;
-                flex: 1 1 auto;
-            }}
-            .photo-cell {{
-                flex: 1 1 54mm;
-                max-width: calc(50% - 3mm);
-                padding-top: 52%;
-                position: relative;
-                border-radius: 4px;
-                overflow: hidden;
-                background: #e2e8f0;
-                box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
-                box-sizing: border-box;
-            }}
-            .photo-cell img {{
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-            }}
-        </style>
-        <div class="photo-grid-card">
-            {f'<h2 class=\"photo-grid-heading\">{heading}</h2>' if heading else ''}
-            <div class="photo-grid">
-                {cells_html}
-            </div>
-        </div>
-    </div>
-    """
-
-
 def _render_page_html(
     layout: PageLayout,
     assets: Dict[str, Asset],
@@ -710,7 +696,7 @@ def _render_page_html(
     if layout.page_type == PageType.TRIP_SUMMARY:
         return _render_trip_summary_card(layout, theme, width_mm, height_mm)
     if layout.page_type == PageType.PHOTO_GRID:
-        return _render_photo_grid_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
+        return _render_photo_grid_from_elements(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.DAY_INTRO:
         return _render_day_intro(layout, theme, width_mm, height_mm)
     if layout.page_type == PageType.PHOTO_SPREAD:

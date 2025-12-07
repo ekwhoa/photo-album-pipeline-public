@@ -1004,16 +1004,10 @@ def choose_grid_layout_variant(photo_count: int) -> str:
     """
     Return a layout_variant string for a photo_grid page.
 
-    Heuristic:
-    - Default to "default".
-    - For 4-photo grids, allow up to the first two grids per day
-      to use "grid_4_simple".
+    - 4 photos: use the hero + 3 below layout ("grid_4_simple")
+    - everything else: stick with "default"
     """
-    global _grid_variant_counter
-    if photo_count != 4:
-        return "default"
-    if _grid_variant_counter < 2:
-        _grid_variant_counter += 1
+    if photo_count == 4:
         return "grid_4_simple"
     return "default"
 

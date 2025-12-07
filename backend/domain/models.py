@@ -320,3 +320,4 @@ class PageLayout:
     background_color: Optional[str] = None
     elements: List[LayoutRect] = field(default_factory=list)
     spread_slot: Optional[str] = None  # For photo_spread pages ("left"|"right")
+    layout_variant: Optional[str] = None
