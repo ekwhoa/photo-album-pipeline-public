@@ -2,6 +2,7 @@
 Books API routes.
 """
 from typing import List, Optional
+from datetime import date, datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -9,7 +10,7 @@ from db import SessionLocal
 from domain.models import Book, BookSize, PageType
 from repositories import BooksRepository, AssetsRepository
 from storage.file_storage import FileStorage
-from services.book_planner import plan_book
+from services.book_planner import plan_book, get_book_segment_debug
 from services.timeline import TimelineService
 
 router = APIRouter()
@@ -58,6 +59,29 @@ class DedupeDebugResponse(BaseModel):
     auto_hidden_clusters_count: int
     auto_hidden_hidden_assets_count: int
     auto_hidden_duplicate_clusters: List[dict]
+
+
+class SegmentDebugSegment(BaseModel):
+    segment_index: int
+    asset_ids: List[str]
+    start_taken_at: Optional[datetime]
+    end_taken_at: Optional[datetime]
+    duration_minutes: Optional[float]
+    approx_distance_km: Optional[float]
+
+
+class SegmentDebugDay(BaseModel):
+    day_index: int
+    date: Optional[date]
+    asset_ids: List[str]
+    segments: List[SegmentDebugSegment]
+
+
+class BookSegmentDebugResponse(BaseModel):
+    book_id: str
+    total_days: int
+    total_assets: int
+    days: List[SegmentDebugDay]
 
 
 class UsageDebugResponse(BaseModel):
@@ -164,6 +188,22 @@ async def usage_debug(book_id: str):
             missing_asset_ids=missing_ids,
             pages=pages_debug,
         )
+
+
+@router.get("/{book_id}/segment_debug", response_model=BookSegmentDebugResponse)
+async def segment_debug(book_id: str):
+    """Debug endpoint: show per-day segments based on time gaps and distance jumps."""
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        approved_assets = assets_repo.list_assets(session, book_id, status=None)
+        timeline_service = TimelineService()
+        days = timeline_service.organize_assets_by_day(approved_assets)
+
+        data = get_book_segment_debug(book_id, days, approved_assets)
+        return BookSegmentDebugResponse(**data)
 
 
 @router.get("", response_model=List[BookResponse])

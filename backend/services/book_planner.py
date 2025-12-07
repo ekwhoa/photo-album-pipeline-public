@@ -5,7 +5,7 @@ Takes organized days/events and creates a Book structure with
 front cover, trip summary, interior pages, and back cover.
 """
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import date
+from datetime import date, datetime
 from domain.models import (
     Asset, Book, BookSize, Day, Page, PageType
 )
@@ -654,6 +654,143 @@ def _normalize_day_photo_pages(day_pages: List[Page]) -> None:
             page.page_type = PageType.FULL_PAGE_PHOTO
             page.payload["hero_asset_id"] = aid
             print(f"[planner][info] converted single-photo grid to full page: {aid}")
+
+
+# ---------------------------
+# Segment debug helpers
+# ---------------------------
+
+SEGMENT_MAX_GAP_MINUTES = 180  # 3 hours
+SEGMENT_MIN_DISTANCE_KM = 40.0
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute haversine distance in km."""
+    from math import radians, sin, cos, sqrt, atan2
+
+    R = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
+
+
+def _build_segments_for_day(day_assets: List[Asset]) -> List[Dict[str, Any]]:
+    """Split a day's assets into segments based on time gaps and distance jumps."""
+    if not day_assets:
+        return []
+
+    segments: List[Dict[str, Any]] = []
+    current_segment: List[Asset] = [day_assets[0]]
+    for prev, curr in zip(day_assets, day_assets[1:]):
+        gap_ok = True
+        jump_ok = True
+
+        # Time gap
+        if prev.metadata and prev.metadata.taken_at and curr.metadata and curr.metadata.taken_at:
+            delta_min = abs((curr.metadata.taken_at - prev.metadata.taken_at).total_seconds()) / 60.0
+            if delta_min > SEGMENT_MAX_GAP_MINUTES:
+                gap_ok = False
+        # Distance jump
+        if (
+            prev.metadata and curr.metadata
+            and prev.metadata.gps_lat is not None and prev.metadata.gps_lon is not None
+            and curr.metadata.gps_lat is not None and curr.metadata.gps_lon is not None
+        ):
+            jump = _haversine_km(
+                prev.metadata.gps_lat, prev.metadata.gps_lon,
+                curr.metadata.gps_lat, curr.metadata.gps_lon,
+            )
+            if jump >= SEGMENT_MIN_DISTANCE_KM:
+                jump_ok = False
+        if gap_ok and jump_ok:
+            current_segment.append(curr)
+        else:
+            segments.append(current_segment)
+            current_segment = [curr]
+    if current_segment:
+        segments.append(current_segment)
+
+    out: List[Dict[str, Any]] = []
+    for idx, seg in enumerate(segments):
+        seg_asset_ids = [a.id for a in seg]
+        times = [a.metadata.taken_at for a in seg if a.metadata and a.metadata.taken_at]
+        start_time = min(times) if times else None
+        end_time = max(times) if times else None
+        duration = None
+        if start_time and end_time:
+            duration = (end_time - start_time).total_seconds() / 60.0
+
+        # Approx distance within segment
+        dist_km = 0.0
+        for s_prev, s_curr in zip(seg, seg[1:]):
+            if (
+                s_prev.metadata and s_curr.metadata
+                and s_prev.metadata.gps_lat is not None and s_prev.metadata.gps_lon is not None
+                and s_curr.metadata.gps_lat is not None and s_curr.metadata.gps_lon is not None
+            ):
+                dist_km += _haversine_km(
+                    s_prev.metadata.gps_lat, s_prev.metadata.gps_lon,
+                    s_curr.metadata.gps_lat, s_curr.metadata.gps_lon,
+                )
+
+        out.append(
+            {
+                "segment_index": idx,
+                "asset_ids": seg_asset_ids,
+                "start_taken_at": start_time,
+                "end_taken_at": end_time,
+                "duration_minutes": duration,
+                "approx_distance_km": dist_km if dist_km > 0 else None,
+            }
+        )
+    return out
+
+
+def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -> Dict[str, Any]:
+    """
+    Build segment debug info without altering planner output.
+    Groups assets by day (existing order) and splits each day into segments.
+    """
+    asset_lookup = {a.id: a for a in assets}
+
+    day_entries: List[Dict[str, Any]] = []
+    total_segments = 0
+    total_assets = 0
+
+    for day in days:
+        day_ids = [entry.asset_id for entry in day.all_entries]
+        ordered_assets: List[Asset] = []
+        for aid in day_ids:
+            if aid in asset_lookup:
+                ordered_assets.append(asset_lookup[aid])
+        # Sort by taken_at when available to be safe
+        ordered_assets.sort(
+            key=lambda a: (
+                a.metadata.taken_at is None if a.metadata else True,
+                a.metadata.taken_at if a.metadata and a.metadata.taken_at else datetime.min,
+            )
+        )
+        total_assets += len(ordered_assets)
+        segments = _build_segments_for_day(ordered_assets)
+        total_segments += len(segments)
+        day_entries.append(
+            {
+                "day_index": day.index if day.index is not None else len(day_entries),
+                "date": day.date.date() if day.date else None,
+                "asset_ids": [a.id for a in ordered_assets],
+                "segments": segments,
+            }
+        )
+
+    print(f"[segments] book={book_id} days={len(day_entries)} segments={total_segments}")
+    return {
+        "book_id": book_id,
+        "total_days": len(day_entries),
+        "total_assets": total_assets,
+        "days": day_entries,
+    }
 
 
 def _select_cluster_hero(cluster: List[str], asset_lookup: Dict[str, Asset]) -> str:

@@ -35,6 +35,30 @@ export const PAGE_TYPE_LABELS: Record<PageType, string> = {
   itinerary: 'Itinerary',
 };
 
+// Segment debug types
+export interface SegmentDebugSegment {
+  segment_index: number;
+  asset_ids: string[];
+  start_taken_at: string | null;
+  end_taken_at: string | null;
+  duration_minutes: number | null;
+  approx_distance_km: number | null;
+}
+
+export interface SegmentDebugDay {
+  day_index: number;
+  date: string | null;
+  asset_ids: string[];
+  segments: SegmentDebugSegment[];
+}
+
+export interface BookSegmentDebugResponse {
+  book_id: string;
+  total_days: number;
+  total_assets: number;
+  days: SegmentDebugDay[];
+}
+
 export const BOOK_SIZES = [
   { value: '8x8', label: '8" × 8" Square' },
   { value: '10x10', label: '10" × 10" Square' },

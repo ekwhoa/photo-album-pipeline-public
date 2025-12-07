@@ -34,6 +34,7 @@ import {
   type AutoHiddenDuplicateCluster,
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
+import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
 import { toast } from 'sonner';
 
 export default function BookDetailPage() {
@@ -54,6 +55,8 @@ export default function BookDetailPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [showClusters, setShowClusters] = useState(false);
   const dedupe = useBookDedupeDebug(id);
+  const segments = useBookSegmentDebug(id);
+  const [expandedSegmentDays, setExpandedSegmentDays] = useState<Set<number>>(new Set());
   const assetsById = useMemo(() => {
     const map: Record<string, Asset> = {};
     assets.forEach((a) => {
@@ -510,6 +513,84 @@ export default function BookDetailPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between">
+                <div>
+                  <CardTitle>Segments (debug)</CardTitle>
+                  <CardDescription>Read-only per-day segments (time/distance splits).</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {segments.loading && <p className="text-sm text-muted-foreground">Loading segments…</p>}
+                {segments.error && (
+                  <p className="text-sm text-destructive">Segments unavailable: {segments.error}</p>
+                )}
+                {!segments.loading && !segments.error && segments.data && (
+                  <div className="space-y-3">
+                    <div className="text-sm text-muted-foreground">
+                      {segments.data.total_days} days · {segments.data.total_assets} assets
+                    </div>
+                    <div className="space-y-2">
+                      {segments.data.days.map((day) => {
+                        const expanded = expandedSegmentDays.has(day.day_index);
+                        const toggle = () => {
+                          setExpandedSegmentDays((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(day.day_index)) {
+                              next.delete(day.day_index);
+                            } else {
+                              next.add(day.day_index);
+                            }
+                            return next;
+                          });
+                        };
+                        return (
+                          <div key={day.day_index} className="border rounded-md p-3 bg-muted/40">
+                            <button
+                              type="button"
+                              onClick={toggle}
+                              className="w-full text-left flex items-center justify-between"
+                            >
+                              <div className="text-sm font-medium text-foreground">
+                                Day {day.day_index} — {day.date || 'Unknown date'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {day.asset_ids.length} assets · {day.segments.length} segments
+                              </div>
+                            </button>
+                            {expanded && (
+                              <div className="mt-2 space-y-2">
+                                {day.segments.map((seg) => (
+                                  <div
+                                    key={seg.segment_index}
+                                    className="border rounded-md p-2 bg-background text-sm flex flex-col gap-1"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-medium">Segment {seg.segment_index}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        {seg.asset_ids.length} assets
+                                      </span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground flex gap-2 flex-wrap">
+                                      <span>
+                                        {formatTimeRange(seg.start_taken_at, seg.end_taken_at)}
+                                      </span>
+                                      <span>· {formatDuration(seg.duration_minutes)}</span>
+                                      <span>· {formatDistance(seg.approx_distance_km)}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Preview Tab */}
@@ -698,4 +779,25 @@ function AssetThumb({ asset }: { asset: Asset }) {
       loading="lazy"
     />
   );
+}
+
+function formatTimeRange(start?: string | null, end?: string | null) {
+  if (!start && !end) return 'Time: —';
+  const opts: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' };
+  const startStr = start ? new Date(start).toLocaleTimeString([], opts) : '—';
+  const endStr = end ? new Date(end).toLocaleTimeString([], opts) : '—';
+  return `${startStr}–${endStr}`;
+}
+
+function formatDuration(mins?: number | null) {
+  if (mins === null || mins === undefined) return 'Duration: —';
+  if (mins >= 60) {
+    return `Duration: ${(mins / 60).toFixed(1)} h`;
+  }
+  return `Duration: ${Math.round(mins)} min`;
+}
+
+function formatDistance(km?: number | null) {
+  if (km === null || km === undefined) return 'Distance: —';
+  return `Distance: ~${km.toFixed(1)} km`;
 }

@@ -71,6 +71,29 @@ export interface BookDedupeDebug {
   auto_hidden_duplicate_clusters: AutoHiddenDuplicateCluster[];
 }
 
+export interface SegmentDebugSegment {
+  segment_index: number;
+  asset_ids: string[];
+  start_taken_at: string | null;
+  end_taken_at: string | null;
+  duration_minutes: number | null;
+  approx_distance_km: number | null;
+}
+
+export interface SegmentDebugDay {
+  day_index: number;
+  date: string | null;
+  asset_ids: string[];
+  segments: SegmentDebugSegment[];
+}
+
+export interface BookSegmentDebugResponse {
+  book_id: string;
+  total_days: number;
+  total_assets: number;
+  days: SegmentDebugDay[];
+}
+
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -99,6 +122,7 @@ export const booksApi = {
   
   get: (id: string) => apiRequest<Book>(`/books/${id}`),
   getDedupeDebug: (id: string) => apiRequest<BookDedupeDebug>(`/books/${id}/dedupe_debug`),
+  getSegmentDebug: (id: string) => apiRequest<BookSegmentDebugResponse>(`/books/${id}/segment_debug`),
   
   create: (data: { title: string; size: string }) =>
     apiRequest<Book>('/books', {
