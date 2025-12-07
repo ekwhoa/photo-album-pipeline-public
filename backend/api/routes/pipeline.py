@@ -171,7 +171,7 @@ async def get_pages(book_id: str):
                     summary = f"Map route: {gps_photo_count} photos with location across ~{distinct_locations} spots"
                 else:
                     summary = "Map route (no GPS data)"
-            elif page.page_type.value == "photo_full":
+            elif page.page_type.value in ("photo_full", "full_page_photo"):
                 asset_ids = page.payload.get("asset_ids", [])
                 hero_asset_id = page.payload.get("hero_asset_id")
                 summary = "Full-page photo"

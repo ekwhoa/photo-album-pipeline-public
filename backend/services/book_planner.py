@@ -6,6 +6,7 @@ front cover, trip summary, interior pages, and back cover.
 """
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import date, datetime
+from dataclasses import dataclass
 from domain.models import (
     Asset, Book, BookSize, Day, Page, PageType
 )
@@ -24,6 +25,24 @@ PHOTOS_PER_PAGE = {
 # Near-duplicate tuning: be very conservative
 HIGH_SIMILARITY_THRESHOLD = 0.92  # only treat as true duplicates when this high
 MIN_CLUSTER_SIZE_FOR_AUTO_HIDE = 3  # never auto-hide if only 2 photos
+
+# Day layout profile heuristics (controls full-page bias per day)
+@dataclass
+class DayLayoutProfile:
+    max_full_page_photos: int
+    prefer_full_page_for_leftovers: bool
+
+
+def compute_day_layout_profile(photo_count: int, segment_count: int) -> DayLayoutProfile:
+    """
+    Compute a simple per-day layout profile based on photos/segments.
+    Small days allow more full-page freedom; busy days bias to grids.
+    """
+    if photo_count <= 12 and segment_count <= 1:
+        return DayLayoutProfile(max_full_page_photos=2, prefer_full_page_for_leftovers=True)
+    if photo_count <= 40 and segment_count <= 2:
+        return DayLayoutProfile(max_full_page_photos=1, prefer_full_page_for_leftovers=False)
+    return DayLayoutProfile(max_full_page_photos=1, prefer_full_page_for_leftovers=False)
 
 
 def plan_book(
@@ -139,6 +158,17 @@ def plan_book(
     full_hero_count = 0
     for day_index, day_date, day_ids in day_asset_sets:
         day_photo_count = len(day_ids)
+        ordered_assets_for_segments = [asset_lookup[aid] for aid in day_ids if aid in asset_lookup]
+        ordered_assets_for_segments.sort(
+            key=lambda a: (
+                a.metadata.taken_at is None if a.metadata else True,
+                a.metadata.taken_at if a.metadata and a.metadata.taken_at else datetime.min,
+            )
+        )
+        day_segments, _, _, _, _ = _build_segments_for_day(ordered_assets_for_segments)
+        segment_count = len(day_segments)
+        profile = compute_day_layout_profile(day_photo_count, segment_count)
+        full_page_photos_for_day = 0
         display_date = day_date.strftime("%B %d, %Y") if day_date else None
         day_intro_pages_count += 1
         interior_pages.append(
@@ -159,6 +189,7 @@ def plan_book(
         if (
             len(day_remaining) >= 5
             and full_hero_count < 2
+            and full_page_photos_for_day < profile.max_full_page_photos
         ):
             hero_full = _select_full_page_hero(day_remaining, asset_lookup)
             if hero_full:
@@ -175,13 +206,21 @@ def plan_book(
                 )
                 current_index += 1
                 full_hero_count += 1
+                full_page_photos_for_day += 1
         day_pages, current_index, spread_used = _build_photo_pages_with_optional_spread(
             day_remaining, photos_per_page, asset_lookup, current_index, spread_used
         )
+
+        full_page_photos_for_day = _normalize_day_photo_pages(
+            day_pages, profile, full_page_photos_for_day
+        )
         interior_pages.extend(day_pages)
 
-    # Apply per-day layout normalization (1-photo grids -> full-page photo)
-    interior_pages = _normalize_day_blocks(interior_pages)
+        print(
+            f"[planner/day-layout] day_index={day_index} date={day_date} "
+            f"photos={day_photo_count} segments={segment_count} "
+            f"max_full_page={profile.max_full_page_photos} full_page_used={full_page_photos_for_day}"
+        )
 
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
@@ -612,48 +651,24 @@ def _build_photo_pages_with_optional_spread(
     return pages, current_index, spread_used
 
 
-def _normalize_day_blocks(pages: List[Page]) -> List[Page]:
+def _normalize_day_photo_pages(day_pages: List[Page], profile: DayLayoutProfile, full_used: int) -> int:
     """
-    Normalize photo pages within each day block without crossing day boundaries.
-    A day block is: day_intro + its photo pages until the next day_intro/back_cover.
-    Converts any photo_grid with exactly one asset into a full_page_photo.
+    Convert any 1-photo grid within a single day to a full-page photo when allowed
+    by the day's profile and cap.
+    Returns updated full-page count.
     """
-    result: List[Page] = []
-    current_intro: Optional[Page] = None
-    current_photos: List[Page] = []
-
-    def flush_block():
-        if current_intro:
-            result.append(current_intro)
-        if current_photos:
-            _normalize_day_photo_pages(current_photos)
-            result.extend(current_photos)
-
-    for p in pages:
-        if p.page_type == PageType.DAY_INTRO:
-            flush_block()
-            current_intro = p
-            current_photos = []
-        else:
-            current_photos.append(p)
-    flush_block()
-    return result
-
-
-def _normalize_day_photo_pages(day_pages: List[Page]) -> None:
-    """
-    Convert any 1-photo grid within a single day to a full-page photo.
-    Operates in-place and does not move photos between pages.
-    """
+    full_count = full_used
     for page in day_pages:
         if page.page_type != PageType.PHOTO_GRID:
             continue
         assets = page.payload.get("asset_ids") or []
-        if len(assets) == 1:
+        if len(assets) == 1 and profile.prefer_full_page_for_leftovers and full_count < profile.max_full_page_photos:
             aid = assets[0]
             page.page_type = PageType.FULL_PAGE_PHOTO
             page.payload["hero_asset_id"] = aid
             print(f"[planner][info] converted single-photo grid to full page: {aid}")
+            full_count += 1
+    return full_count
 
 
 # ---------------------------
