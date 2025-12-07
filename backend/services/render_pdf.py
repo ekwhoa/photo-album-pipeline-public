@@ -517,7 +517,12 @@ def _render_photo_full(
         if elem.asset_id:
             asset_id = elem.asset_id
             break
-
+    if not asset_id and hasattr(layout, "payload"):
+        asset_id = layout.payload.get("hero_asset_id") or (
+            (layout.payload.get("asset_ids") or [None])[0]
+            if isinstance(layout.payload, dict)
+            else None
+        )
     img_src = ""
     if asset_id and asset_id in assets:
         asset = assets[asset_id]

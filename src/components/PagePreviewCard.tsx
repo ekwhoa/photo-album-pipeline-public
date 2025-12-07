@@ -17,6 +17,7 @@ const PAGE_TYPE_LABELS: Record<string, string> = {
   photo_grid: 'Photo Grid',
   day_intro: 'Day Intro',
   photo_spread: 'Photo Spread',
+  full_page_photo: 'Full Page Photo',
   photo_full: 'Full Page Photo',
   trip_summary: 'Trip Summary',
   map_route: 'Map Route',
@@ -30,6 +31,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   photo_grid: <Grid3X3 className="h-4 w-4" />,
   day_intro: <Calendar className="h-4 w-4" />,
   photo_spread: <Image className="h-4 w-4" />,
+  full_page_photo: <Image className="h-4 w-4" />,
   photo_full: <Image className="h-4 w-4" />,
   trip_summary: <FileText className="h-4 w-4" />,
   map_route: <MapPin className="h-4 w-4" />,
@@ -60,7 +62,7 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick }: PagePrevie
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc && spreadSlot) ? (
             <SpreadImage src={heroSrc} slot={spreadSlot} />
-          ) : page.page_type === 'photo_full' && heroSrc ? (
+          ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center p-2">
               <img src={heroSrc} alt="" className="photo-full-image" />
             </div>

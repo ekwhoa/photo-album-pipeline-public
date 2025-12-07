@@ -400,6 +400,13 @@ def layout_photo_full(page: Page, context: RenderContext) -> PageLayout:
     )
 
 
+# Alias for planner output using FULL_PAGE_PHOTO
+@register_layout(PageType.FULL_PAGE_PHOTO)
+def layout_full_page_photo(page: Page, context: RenderContext) -> PageLayout:
+    """Alias to layout_photo_full for alternate page type."""
+    return layout_photo_full(page, context)
+
+
 @register_layout(PageType.MAP_ROUTE)
 def layout_map_route(page: Page, context: RenderContext) -> PageLayout:
     """Text-only layout for map route stats."""

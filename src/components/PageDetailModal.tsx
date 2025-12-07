@@ -22,6 +22,7 @@ const PAGE_TYPE_LABELS: Record<string, string> = {
   photo_grid: 'Photo Grid',
   day_intro: 'Day Intro',
   photo_spread: 'Photo Spread',
+  full_page_photo: 'Full Page Photo',
   photo_full: 'Full Page Photo',
   trip_summary: 'Trip Summary',
   map_route: 'Map Route',
@@ -35,6 +36,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   photo_grid: <Grid3X3 className="h-5 w-5" />,
   day_intro: <Calendar className="h-5 w-5" />,
   photo_spread: <Image className="h-5 w-5" />,
+  full_page_photo: <Image className="h-5 w-5" />,
   photo_full: <Image className="h-5 w-5" />,
   trip_summary: <FileText className="h-5 w-5" />,
   map_route: <MapPin className="h-5 w-5" />,
@@ -83,7 +85,7 @@ export function PageDetailModal({
             <div className="spread-frame w-full">
               <img src={heroSrc} alt="" className={spreadSlot === 'left' ? 'spread-img spread-img-left' : 'spread-img spread-img-right'} />
             </div>
-          ) : page.page_type === 'photo_full' && heroSrc ? (
+          ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center bg-muted/30 rounded-lg p-4">
               <img src={heroSrc} alt="" className="photo-full-image max-h-[70vh]" />
             </div>
