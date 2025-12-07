@@ -54,9 +54,10 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assetMap[heroId] : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
-  const spreadSlot =
+  const spreadSlotRaw =
     (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
     (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
+  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? 'left';
 
   return (
     <Card
@@ -65,7 +66,7 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
     >
       <CardContent className="p-0">
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
-          {(page.page_type === 'photo_spread' && heroSrc && spreadSlot) ? (
+          {(page.page_type === 'photo_spread' && heroSrc) ? (
             <SpreadImage src={heroSrc} slot={spreadSlot} />
           ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
             <PhotoGridPreview page={page} assetMap={assetMap} />
@@ -111,11 +112,31 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   );
 }
 
-function SpreadImage({ src, slot }: { src: string; slot: 'left' | 'right' }) {
-  const cls = slot === 'left' ? 'spread-img spread-img-left' : 'spread-img spread-img-right';
+function SpreadImage({
+  src,
+  alt = '',
+  className = '',
+}: {
+  src: string;
+  alt?: string;
+  className?: string;
+}) {
   return (
-    <div className="spread-frame">
-      <img src={src} alt="" className={cls} />
+    <div className={`spread-frame flex w-full h-full overflow-hidden ${className}`}>
+      <div className="flex-1 relative">
+        <img
+          src={src}
+          alt={alt}
+          className="spread-img spread-img-left absolute inset-0 w-full h-full object-cover"
+        />
+      </div>
+      <div className="flex-1 relative">
+        <img
+          src={src}
+          alt={alt}
+          className="spread-img spread-img-right absolute inset-0 w-full h-full object-cover"
+        />
+      </div>
     </div>
   );
 }

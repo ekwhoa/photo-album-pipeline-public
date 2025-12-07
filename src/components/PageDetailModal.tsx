@@ -94,8 +94,15 @@ export function PageDetailModal({
 
         <div className="mt-4">
           {page.page_type === 'photo_spread' && heroSrc && spreadSlot ? (
-            <div className="spread-frame w-full">
-              <img src={heroSrc} alt="" className={spreadSlot === 'left' ? 'spread-img spread-img-left' : 'spread-img spread-img-right'} />
+            <div className="spread-frame w-full h-full overflow-hidden">
+              <div className="grid grid-cols-2 gap-0 w-full h-full">
+                <div className="relative">
+                  <img src={heroSrc} alt="" className="spread-img spread-img-left absolute inset-0 w-full h-full object-cover" />
+                </div>
+                <div className="relative">
+                  <img src={heroSrc} alt="" className="spread-img spread-img-right absolute inset-0 w-full h-full object-cover" />
+                </div>
+              </div>
             </div>
           ) : page.page_type === 'photo_grid' ? (
             <PhotoGridDetail page={page} assets={assets} />
