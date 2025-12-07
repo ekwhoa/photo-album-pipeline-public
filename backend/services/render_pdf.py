@@ -462,7 +462,7 @@ def _render_photo_grid_card(
                 padding: 6mm;
                 background: #f8fafc;
                 border: 1px solid #d9e2ec;
-                border-radius: 10px;
+                border-radius: 6px;
                 box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
                 display: flex;
                 flex-direction: column;
@@ -493,7 +493,7 @@ def _render_photo_grid_card(
                 max-width: calc(50% - 3mm);
                 padding-top: 52%;
                 position: relative;
-                border-radius: 8px;
+                border-radius: 4px;
                 overflow: hidden;
                 background: #e2e8f0;
                 box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
