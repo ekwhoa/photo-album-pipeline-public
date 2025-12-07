@@ -44,6 +44,12 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   itinerary: <Calendar className="h-5 w-5" />,
 };
 
+type DayNarrativeSummary = {
+  label: string;
+  durationLabel: string;
+  distanceLabel: string;
+};
+
 interface PageDetailModalProps {
   page: PagePreview | null;
   pages: PagePreview[];
@@ -51,6 +57,7 @@ interface PageDetailModalProps {
   bookTitle?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  narrativeSummary?: DayNarrativeSummary;
 }
 
 export function PageDetailModal({ 
@@ -59,7 +66,8 @@ export function PageDetailModal({
   assets, 
   bookTitle, 
   open, 
-  onOpenChange 
+  onOpenChange,
+  narrativeSummary,
 }: PageDetailModalProps) {
   if (!page) return null;
 
@@ -88,6 +96,24 @@ export function PageDetailModal({
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center bg-muted/30 rounded-lg p-4">
               <img src={heroSrc} alt="" className="photo-full-image max-h-[70vh]" />
+            </div>
+          ) : page.page_type === 'day_intro' ? (
+            <div className="text-center py-8 space-y-3 bg-muted/30 rounded-lg">
+              <div className="flex items-center justify-center gap-3 text-foreground">
+                {icon}
+                <h2 className="text-2xl font-bold">Page {page.index + 1} – {label}</h2>
+              </div>
+              <p className="text-muted-foreground text-sm max-w-2xl mx-auto">
+                {page.summary}
+              </p>
+              {narrativeSummary && (
+                <p className="text-sm text-slate-700">
+                  {narrativeSummary.label}
+                  <span className="ml-2 text-xs text-slate-500">
+                    {narrativeSummary.durationLabel} · {narrativeSummary.distanceLabel}
+                  </span>
+                </p>
+              )}
             </div>
           ) : (
             <div className="text-center py-12 space-y-4 bg-muted/30 rounded-lg">

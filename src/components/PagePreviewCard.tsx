@@ -10,6 +10,7 @@ interface PagePreviewCardProps {
   bookTitle?: string;
   onClick?: () => void;
   segmentSummary?: { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null };
+  dayNarrativeSummary?: { label: string; durationLabel: string; distanceLabel: string };
 }
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
@@ -40,7 +41,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   itinerary: <Calendar className="h-4 w-4" />,
 };
 
-export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSummary }: PagePreviewCardProps) {
+export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSummary, dayNarrativeSummary }: PagePreviewCardProps) {
   const label = PAGE_TYPE_LABELS[page.page_type] || page.page_type;
   const icon = PAGE_ICONS[page.page_type] || <Image className="h-4 w-4" />;
   const assetMap = useMemo(() => {
@@ -75,6 +76,11 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
               {page.page_type === 'day_intro' && segmentSummary && segmentSummary.segmentsCount > 0 && (
                 <p className="text-[11px] text-muted-foreground">
                   {formatSegmentSummary(segmentSummary)}
+                </p>
+              )}
+              {page.page_type === 'day_intro' && dayNarrativeSummary && (
+                <p className="text-[11px] text-muted-foreground">
+                  {dayNarrativeSummary.label}
                 </p>
               )}
             </div>

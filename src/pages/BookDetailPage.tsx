@@ -33,7 +33,6 @@ import {
   type PagePreview,
   type AutoHiddenDuplicateCluster,
   type BookSegmentDebugResponse,
-  type SegmentDebugDay,
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
@@ -74,30 +73,45 @@ export default function BookDetailPage() {
 
   const daySegmentSummaryByIndex = useMemo(() => {
     if (!segments.data?.days) return {};
-    const result: Record<number, { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null }> = {};
+    const result: Record<number, { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number }> = {};
     for (const day of segments.data.days) {
       const segmentsList = day.segments || [];
       const segmentsCount = segmentsList.length;
       let totalDurationMinutes = 0;
       let totalDistanceKm = 0;
-      let hasDistance = false;
       for (const seg of segmentsList) {
         if (typeof seg.duration_minutes === 'number') {
           totalDurationMinutes += seg.duration_minutes;
         }
         if (typeof seg.approx_distance_km === 'number') {
           totalDistanceKm += seg.approx_distance_km;
-          hasDistance = true;
         }
       }
       result[day.day_index] = {
         segmentsCount,
         totalDurationMinutes,
-        totalDistanceKm: hasDistance ? totalDistanceKm : null,
+        totalDistanceKm,
       };
     }
     return result;
   }, [segments.data]);
+
+  const dayNarrativeByIndex = useMemo(() => {
+    if (!segments.data?.days) return {};
+    const result: Record<number, DayNarrativeSummary> = {};
+    for (const day of segments.data.days) {
+      const summary = daySegmentSummaryByIndex[day.day_index];
+      if (!summary) continue;
+      const photoCount = day.asset_ids?.length ?? 0;
+      result[day.day_index] = buildDayNarrative({
+        segmentsCount: summary.segmentsCount,
+        totalDurationMinutes: summary.totalDurationMinutes,
+        totalDistanceKm: summary.totalDistanceKm,
+        photoCount,
+      });
+    }
+    return result;
+  }, [segments.data, daySegmentSummaryByIndex]);
   const assetsById = useMemo(() => {
     const map: Record<string, Asset> = {};
     assets.forEach((a) => {
@@ -725,6 +739,11 @@ export default function BookDetailPage() {
                             ? daySegmentSummaryByIndex[dayIndexByPageIndex[page.index]]
                             : undefined
                         }
+                        dayNarrativeSummary={
+                          page.page_type === 'day_intro'
+                            ? dayNarrativeByIndex[dayIndexByPageIndex[page.index]]
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
@@ -741,6 +760,11 @@ export default function BookDetailPage() {
             bookTitle={book.title}
             open={!!selectedPage}
             onOpenChange={(open) => !open && setSelectedPage(null)}
+            narrativeSummary={
+              selectedPage && selectedPage.page_type === 'day_intro'
+                ? dayNarrativeByIndex[dayIndexByPageIndex[selectedPage.index]]
+                : undefined
+            }
           />
         </Tabs>
       </main>
@@ -846,6 +870,44 @@ function formatDuration(mins?: number | null) {
 function formatDistance(km?: number | null) {
   if (km === null || km === undefined) return 'Distance: —';
   return `Distance: ~${km.toFixed(1)} km`;
+}
+
+type DayStats = {
+  segmentsCount: number;
+  totalDurationMinutes: number;
+  totalDistanceKm: number;
+  photoCount: number;
+};
+
+type DayNarrativeSummary = {
+  label: string;
+  durationLabel: string;
+  distanceLabel: string;
+};
+
+function buildDayNarrative(stats: DayStats): DayNarrativeSummary {
+  const hours = stats.totalDurationMinutes / 60;
+  const far = stats.totalDistanceKm >= 100;
+  const mediumDistance = stats.totalDistanceKm >= 10 && stats.totalDistanceKm < 100;
+  const longDay = hours >= 8;
+  const shortDay = hours < 3;
+
+  let label = 'Easygoing day';
+  if (far) {
+    label = 'Big travel day';
+  } else if (longDay && mediumDistance) {
+    label = 'Full-day exploring';
+  } else if (shortDay && stats.totalDistanceKm < 5) {
+    label = 'Chill day nearby';
+  } else if (longDay) {
+    label = 'Long day out';
+  } else if (mediumDistance) {
+    label = 'Out and about';
+  }
+
+  const durationLabel = `${hours.toFixed(1)} h out and about`;
+  const distanceLabel = `~${stats.totalDistanceKm.toFixed(1)} km traveled`;
+  return { label, durationLabel, distanceLabel };
 }
 
 function formatSegmentsLine(summary?: { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null }) {
