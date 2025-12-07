@@ -8,29 +8,31 @@ import type { BookPage, GridLayoutVariant } from '@/types/book';
 type SpreadImageMode = 'thumb' | 'modal';
 
 interface SpreadImageProps {
-  heroSrc: string;
+  heroSrc?: string;
   mode?: SpreadImageMode;
 }
 
 const SpreadImage: React.FC<SpreadImageProps> = ({ heroSrc, mode = 'thumb' }) => {
+  if (!heroSrc) return null;
+
   const imgBase =
     mode === 'thumb'
-      ? 'h-40 w-full object-cover rounded-t-lg'
-      : 'h-64 w-full object-cover rounded-lg';
+      ? 'h-[160px] w-full object-cover rounded-t-xl'
+      : 'h-[260px] md:h-[360px] w-full object-cover rounded-xl';
 
   return (
-    <div className="flex w-full gap-2">
+    <div className={mode === 'thumb' ? 'w-full overflow-hidden bg-muted flex' : 'w-full max-w-4xl mx-auto overflow-hidden bg-muted flex'}>
       <img
         src={heroSrc}
         alt="Photo spread left page"
-        className={`${imgBase} object-cover`}
-        style={{ objectPosition: 'left center', width: '200%' }}
+        className={imgBase}
+        style={{ width: '50%', objectPosition: 'left center' }}
       />
       <img
         src={heroSrc}
         alt="Photo spread right page"
-        className={`${imgBase} object-cover`}
-        style={{ objectPosition: 'right center', width: '200%' }}
+        className={imgBase}
+        style={{ width: '50%', objectPosition: 'right center' }}
       />
     </div>
   );
