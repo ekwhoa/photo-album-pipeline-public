@@ -5,39 +5,6 @@ import type { Asset } from '@/lib/api';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
 import type { BookPage, GridLayoutVariant } from '@/types/book';
 
-type SpreadImageMode = 'thumb' | 'modal';
-
-interface SpreadImageProps {
-  heroSrc?: string;
-  mode?: SpreadImageMode;
-}
-
-const SpreadImage: React.FC<SpreadImageProps> = ({ heroSrc, mode = 'thumb' }) => {
-  if (!heroSrc) return null;
-
-  const imgBase =
-    mode === 'thumb'
-      ? 'h-[160px] w-full object-cover rounded-t-xl'
-      : 'h-[260px] md:h-[360px] w-full object-cover rounded-xl';
-
-  return (
-    <div className={mode === 'thumb' ? 'w-full overflow-hidden bg-muted flex' : 'w-full max-w-4xl mx-auto overflow-hidden bg-muted flex'}>
-      <img
-        src={heroSrc}
-        alt="Photo spread left page"
-        className={imgBase}
-        style={{ width: '50%', objectPosition: 'left center' }}
-      />
-      <img
-        src={heroSrc}
-        alt="Photo spread right page"
-        className={imgBase}
-        style={{ width: '50%', objectPosition: 'right center' }}
-      />
-    </div>
-  );
-};
-
 interface PagePreviewCardProps {
   page: BookPage;
   assets: Asset[]; // unused, kept for prop compatibility
@@ -96,7 +63,9 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
       <CardContent className="p-0">
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc) ? (
-            <SpreadImage heroSrc={heroSrc} mode="thumb" />
+            <div className="photo-full-inner w-full h-full flex items-center justify-center p-2">
+              <img src={heroSrc} alt="Photo spread hero" className="photo-full-image" />
+            </div>
           ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
             <PhotoGridPreview page={page} assetMap={assetMap} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
