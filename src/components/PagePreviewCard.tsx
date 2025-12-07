@@ -5,6 +5,35 @@ import type { Asset } from '@/lib/api';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
 import type { BookPage, GridLayoutVariant } from '@/types/book';
 
+type SpreadImageMode = 'thumb' | 'modal';
+
+interface SpreadImageProps {
+  heroSrc: string;
+  mode?: SpreadImageMode;
+}
+
+const SpreadImage: React.FC<SpreadImageProps> = ({ heroSrc, mode = 'thumb' }) => {
+  const imgBase =
+    mode === 'thumb'
+      ? 'h-40 w-full object-cover rounded-t-lg'
+      : 'h-64 w-full object-cover rounded-lg';
+
+  return (
+    <div className="flex w-full gap-2">
+      <img
+        src={heroSrc}
+        alt="Photo spread left page"
+        className={`${imgBase} object-left`}
+      />
+      <img
+        src={heroSrc}
+        alt="Photo spread right page"
+        className={`${imgBase} object-right`}
+      />
+    </div>
+  );
+};
+
 interface PagePreviewCardProps {
   page: BookPage;
   assets: Asset[]; // unused, kept for prop compatibility
@@ -54,10 +83,6 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assetMap[heroId] : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
-  const spreadSlotRaw =
-    (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
-    (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
-  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? 'left';
 
   return (
     <Card
@@ -67,7 +92,7 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
       <CardContent className="p-0">
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc) ? (
-            <SpreadImage src={heroSrc} alt={page.summary || 'Photo spread'} slot={spreadSlot} />
+            <SpreadImage heroSrc={heroSrc} mode="thumb" />
           ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
             <PhotoGridPreview page={page} assetMap={assetMap} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
@@ -109,27 +134,6 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function SpreadImage({
-  src,
-  alt = '',
-  slot,
-}: {
-  src: string;
-  alt?: string;
-  slot: 'left' | 'right';
-}) {
-  const sideClass = slot === 'right' ? 'spread-img-right' : 'spread-img-left';
-  return (
-    <div className="spread-frame">
-      <img
-        src={src}
-        alt={alt}
-        className={`spread-img ${sideClass}`}
-      />
-    </div>
   );
 }
 
