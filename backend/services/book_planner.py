@@ -660,8 +660,9 @@ def _normalize_day_photo_pages(day_pages: List[Page]) -> None:
 # Segment debug helpers
 # ---------------------------
 
-SEGMENT_MAX_GAP_MINUTES = 180  # 3 hours
-SEGMENT_MIN_DISTANCE_KM = 40.0
+MAX_SEGMENT_TIME_GAP_MINUTES = 120  # Split if gap between photos exceeds 2h
+LARGE_MOVE_DISTANCE_KM = 10.0       # Split if distance jump exceeds 10km
+MIN_PHOTOS_PER_SEGMENT = 3          # Avoid micro segments; merge if below this
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -676,22 +677,34 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
-def _build_segments_for_day(day_assets: List[Asset]) -> List[Dict[str, Any]]:
-    """Split a day's assets into segments based on time gaps and distance jumps."""
+def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any]], int, int]:
+    """
+    Split a day's assets into segments based on time gaps and distance jumps.
+    Steps:
+    1) Initial split on large time gaps or large moves.
+    2) Merge micro segments (< MIN_PHOTOS_PER_SEGMENT) unless they are clearly isolated.
+    """
     if not day_assets:
         return []
 
-    segments: List[Dict[str, Any]] = []
+    # Initial segmentation pass
+    segments: List[List[Asset]] = []
     current_segment: List[Asset] = [day_assets[0]]
+    break_reasons: List[Dict[str, bool]] = []  # reasons for break after segment i
+    large_gap_count = 0
+    large_move_count = 0
+
     for prev, curr in zip(day_assets, day_assets[1:]):
-        gap_ok = True
-        jump_ok = True
+        split = False
+        reason = {"time_gap": False, "move_gap": False}
 
         # Time gap
         if prev.metadata and prev.metadata.taken_at and curr.metadata and curr.metadata.taken_at:
             delta_min = abs((curr.metadata.taken_at - prev.metadata.taken_at).total_seconds()) / 60.0
-            if delta_min > SEGMENT_MAX_GAP_MINUTES:
-                gap_ok = False
+            if delta_min > MAX_SEGMENT_TIME_GAP_MINUTES:
+                split = True
+                reason["time_gap"] = True
+                large_gap_count += 1
         # Distance jump
         if (
             prev.metadata and curr.metadata
@@ -702,18 +715,50 @@ def _build_segments_for_day(day_assets: List[Asset]) -> List[Dict[str, Any]]:
                 prev.metadata.gps_lat, prev.metadata.gps_lon,
                 curr.metadata.gps_lat, curr.metadata.gps_lon,
             )
-            if jump >= SEGMENT_MIN_DISTANCE_KM:
-                jump_ok = False
-        if gap_ok and jump_ok:
-            current_segment.append(curr)
-        else:
+            if jump >= LARGE_MOVE_DISTANCE_KM:
+                split = True
+                reason["move_gap"] = True
+                large_move_count += 1
+        if split:
             segments.append(current_segment)
+            break_reasons.append(reason)
             current_segment = [curr]
+        else:
+            current_segment.append(curr)
     if current_segment:
         segments.append(current_segment)
 
+    # Merge micro segments that are not clearly isolated
+    idx = 0
+    while idx < len(segments):
+        seg = segments[idx]
+        if len(seg) < MIN_PHOTOS_PER_SEGMENT:
+            # Determine isolation: if both neighbors are separated by strong reasons, keep; else merge
+            before_is_strong = False
+            after_is_strong = False
+            if idx > 0:
+                br = break_reasons[idx - 1]
+                before_is_strong = br.get("time_gap") or br.get("move_gap")
+            if idx < len(break_reasons):
+                br = break_reasons[idx]
+                after_is_strong = br.get("time_gap") or br.get("move_gap")
+
+            if not (before_is_strong and after_is_strong):
+                # Prefer merging backward if possible, else forward
+                if idx > 0:
+                    segments[idx - 1].extend(seg)
+                    del break_reasons[idx - 1]
+                    del segments[idx]
+                    continue
+                elif idx + 1 < len(segments):
+                    segments[idx + 1] = seg + segments[idx + 1]
+                    del break_reasons[idx]
+                    del segments[idx]
+                    continue
+        idx += 1  # advance if not merged
+
     out: List[Dict[str, Any]] = []
-    for idx, seg in enumerate(segments):
+    for idx_seg, seg in enumerate(segments):
         seg_asset_ids = [a.id for a in seg]
         times = [a.metadata.taken_at for a in seg if a.metadata and a.metadata.taken_at]
         start_time = min(times) if times else None
@@ -737,7 +782,7 @@ def _build_segments_for_day(day_assets: List[Asset]) -> List[Dict[str, Any]]:
 
         out.append(
             {
-                "segment_index": idx,
+                "segment_index": idx_seg,
                 "asset_ids": seg_asset_ids,
                 "start_taken_at": start_time,
                 "end_taken_at": end_time,
@@ -745,7 +790,7 @@ def _build_segments_for_day(day_assets: List[Asset]) -> List[Dict[str, Any]]:
                 "approx_distance_km": dist_km if dist_km > 0 else None,
             }
         )
-    return out
+    return out, large_gap_count, large_move_count
 
 
 def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -> Dict[str, Any]:
@@ -773,7 +818,7 @@ def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -
             )
         )
         total_assets += len(ordered_assets)
-        segments = _build_segments_for_day(ordered_assets)
+        segments, gap_count, move_count = _build_segments_for_day(ordered_assets)
         total_segments += len(segments)
         day_entries.append(
             {
@@ -782,6 +827,10 @@ def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -
                 "asset_ids": [a.id for a in ordered_assets],
                 "segments": segments,
             }
+        )
+        print(
+            f"[segmenter] book={book_id} day={day.date.date() if day.date else 'n/a'} "
+            f"assets={len(ordered_assets)} segments={len(segments)} gaps>{MAX_SEGMENT_TIME_GAP_MINUTES}m={gap_count} moves>{LARGE_MOVE_DISTANCE_KM}km={move_count}"
         )
 
     print(f"[segments] book={book_id} days={len(day_entries)} segments={total_segments}")
