@@ -483,7 +483,7 @@ def _render_photo_spread(
             width:100%;
             height:100%;
             background-image:url('{img_path}');
-            background-size:200% 100%;
+            background-size:200% auto;
             background-position:{position};
             background-repeat:no-repeat;
         "></div>
