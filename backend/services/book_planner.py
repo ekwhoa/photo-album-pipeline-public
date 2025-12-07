@@ -4,7 +4,7 @@ Book planner service.
 Takes organized days/events and creates a Book structure with
 front cover, trip summary, interior pages, and back cover.
 """
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from datetime import date
 from domain.models import (
     Asset, Book, BookSize, Day, Page, PageType
@@ -109,15 +109,22 @@ def plan_book(
         )
         interior_start_index = 3
     
+    # Deduplicate near-identical shots per day (order preserved)
+    deduped_ids, dedup_summary = _dedupe_assets_by_day(all_asset_ids, asset_lookup)
+
     # Create interior photo grid pages
     photos_per_page = PHOTOS_PER_PAGE.get(size.value, 4)
-    interior_pages = _create_photo_grid_pages(all_asset_ids, photos_per_page, start_index=interior_start_index)
+    interior_pages = _create_photo_grid_pages(deduped_ids, photos_per_page, asset_lookup, start_index=interior_start_index)
     
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
     if map_route_page:
         all_interior_pages.append(map_route_page)
     all_interior_pages.extend(interior_pages)
+    print(
+        f"[planner] Assets: approved={len(assets)} used={len(deduped_ids)} "
+        f"auto_hidden_duplicates={dedup_summary.get('dropped', 0)}"
+    )
     
     # Create back cover (last page)
     back_cover = Page(
@@ -216,6 +223,75 @@ def compute_gps_stats(assets: List[Asset]) -> Tuple[int, int]:
     return gps_photo_count, len(distinct_set)
 
 
+def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) -> Tuple[List[str], Dict[str, int]]:
+    """Remove near-duplicates per day while preserving chronological order."""
+    kept: List[str] = []
+    dropped = 0
+
+    # Group asset IDs by day index based on appearance order in the original list
+    # Day boundaries are assumed to be reflected in order of asset_ids passed in.
+    # We simply walk in order and apply per-day clustering until taken_at day changes.
+    current_day_assets: List[str] = []
+    current_day_date: Optional[date] = None
+
+    def flush_day(ids: List[str]):
+        nonlocal dropped
+        # Within a day, sort by taken_at (fallback to as-is) and cluster
+        sorted_ids = sorted(
+            ids,
+            key=lambda aid: asset_lookup.get(aid).metadata.taken_at if asset_lookup.get(aid) and asset_lookup.get(aid).metadata else None,
+        )
+        clustered_keep: List[str] = []
+
+        def is_near_duplicate(a_id: str, b_id: str) -> bool:
+            a = asset_lookup.get(a_id)
+            b = asset_lookup.get(b_id)
+            if not a or not b or not a.metadata or not b.metadata:
+                return False
+            if not (a.metadata.taken_at and b.metadata.taken_at):
+                return False
+            delta = abs((a.metadata.taken_at - b.metadata.taken_at).total_seconds())
+            if delta > 10:
+                return False
+            if not (a.metadata.width and a.metadata.height and b.metadata.width and b.metadata.height):
+                return False
+            same_orientation = (a.metadata.width >= a.metadata.height) == (b.metadata.width >= b.metadata.height)
+            max_dim = max(a.metadata.width, a.metadata.height, b.metadata.width, b.metadata.height)
+            dim_diff = max(abs(a.metadata.width - b.metadata.width), abs(a.metadata.height - b.metadata.height))
+            if same_orientation and dim_diff <= max(64, 0.05 * max_dim):
+                return True
+            return False
+
+        for aid in sorted_ids:
+            if any(is_near_duplicate(aid, kept_id) for kept_id in clustered_keep):
+                dropped += 1
+                continue
+            clustered_keep.append(aid)
+
+        kept.extend(clustered_keep)
+
+    for aid in asset_ids:
+        asset = asset_lookup.get(aid)
+        if not asset or not asset.metadata or not asset.metadata.taken_at:
+            # If no timestamp, just treat as current day continuation
+            current_day_assets.append(aid)
+            continue
+        aid_date = asset.metadata.taken_at.date()
+        if current_day_date is None:
+            current_day_date = aid_date
+        if aid_date != current_day_date:
+            flush_day(current_day_assets)
+            current_day_assets = [aid]
+            current_day_date = aid_date
+        else:
+            current_day_assets.append(aid)
+
+    if current_day_assets:
+        flush_day(current_day_assets)
+
+    return kept, {"dropped": dropped}
+
+
 def _create_trip_summary_page(
     title: str,
     days: List[Day],
@@ -256,10 +332,10 @@ def _create_trip_summary_page(
     )
 
 
-def _create_photo_grid_pages(asset_ids: List[str], photos_per_page: int, start_index: int = 1) -> List[Page]:
-    """Create photo grid pages from asset IDs."""
-    pages = []
-    
+def _create_photo_grid_pages(asset_ids: List[str], photos_per_page: int, asset_lookup: Dict[str, Asset], start_index: int = 1) -> List[Page]:
+    """Create photo grid pages from asset IDs in order (no reordering)."""
+    pages: List[Page] = []
+
     for i in range(0, len(asset_ids), photos_per_page):
         batch = asset_ids[i:i + photos_per_page]
         page = Page(
@@ -271,7 +347,8 @@ def _create_photo_grid_pages(asset_ids: List[str], photos_per_page: int, start_i
             },
         )
         pages.append(page)
-    
+        print(f"[planner] Photo grid page {start_index + len(pages) - 1} assets={batch}")
+
     return pages
 
 
