@@ -144,7 +144,7 @@ function getLayoutVariant(page: BookPage | null): GridLayoutVariant | null {
 
 function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) {
   const rawVariant = getLayoutVariant(page);
-  const variant: GridLayoutVariant = rawVariant && rawVariant !== 'default' ? rawVariant : 'grid_4_simple';
+  const variant: GridLayoutVariant = rawVariant ?? 'default';
   const gridAssets = (page.asset_ids || [])
     .map((id) => assets.find((a) => a.id === id))
     .filter(Boolean) as Asset[];
@@ -193,7 +193,16 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
     );
   }
 
-  // Default 4-up
+  if (variant === 'grid_4_simple' && gridAssets.length >= 4) {
+    return (
+      <div className="grid grid-cols-3 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg">
+        <div className="col-span-3">{renderImage(gridAssets[0])}</div>
+        {gridAssets.slice(1, 4).map((asset) => renderImage(asset))}
+      </div>
+    );
+  }
+
+  // Default 4-up (original layout / fallback)
   return (
     <div className="grid grid-cols-2 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg min-h-[360px]">
       {gridAssets.slice(0, 4).map((asset) => renderImage(asset))}
