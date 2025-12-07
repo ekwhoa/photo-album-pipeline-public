@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { UploadZone } from '@/components/UploadZone';
@@ -26,6 +26,8 @@ import {
   booksApi,
   assetsApi,
   pipelineApi,
+  getAssetUrl,
+  getThumbnailUrl,
   type Book,
   type Asset,
   type PagePreview,
@@ -33,6 +35,7 @@ import {
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { toast } from 'sonner';
+import { useMemo, useState, useEffect } from 'react';
 
 export default function BookDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -52,6 +55,13 @@ export default function BookDetailPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [showClusters, setShowClusters] = useState(false);
   const dedupe = useBookDedupeDebug(id);
+  const assetsById = useMemo(() => {
+    const map: Record<string, Asset> = {};
+    assets.forEach((a) => {
+      map[a.id] = a;
+    });
+    return map;
+  }, [assets]);
 
   const loadBook = async () => {
     if (!id) return;
@@ -495,6 +505,7 @@ export default function BookDetailPage() {
                       clusters={dedupe.data.auto_hidden_duplicate_clusters}
                       show={showClusters}
                       onToggle={() => setShowClusters((v) => !v)}
+                      assetMap={assetsById}
                     />
                   </div>
                 )}
@@ -624,10 +635,12 @@ function ClusterList({
   clusters,
   show,
   onToggle,
+  assetMap,
 }: {
   clusters: AutoHiddenDuplicateCluster[];
   show: boolean;
   onToggle: () => void;
+  assetMap: Record<string, Asset>;
 }) {
   if (!clusters || clusters.length === 0) {
     return <p className="text-sm text-muted-foreground">No duplicate clusters detected.</p>;
@@ -644,14 +657,46 @@ function ClusterList({
       {show && (
         <div className="max-h-64 overflow-auto space-y-2 rounded-md border border-muted-foreground/10 p-2 bg-muted/40">
           {clusters.map((cluster) => (
-            <div key={cluster.cluster_id} className="rounded-md border border-muted-foreground/20 bg-background p-2">
+            <div key={cluster.cluster_id} className="rounded-md border border-muted-foreground/20 bg-background p-2 space-y-2">
               <div className="text-xs font-semibold text-muted-foreground">Cluster: {cluster.cluster_id}</div>
-              <div className="text-xs">Kept: {cluster.kept_asset_id}</div>
-              <div className="text-xs">Hidden: {cluster.hidden_asset_ids.join(', ') || '—'}</div>
+              <div className="text-xs font-medium">Kept</div>
+              <div className="flex flex-wrap gap-2">
+                {assetMap[cluster.kept_asset_id] ? (
+                  <AssetThumb asset={assetMap[cluster.kept_asset_id]} />
+                ) : (
+                  <div className="text-[10px] text-muted-foreground">Missing asset {cluster.kept_asset_id}</div>
+                )}
+              </div>
+              <div className="text-xs font-medium">
+                Hidden ({cluster.hidden_asset_ids.length})
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {cluster.hidden_asset_ids.map((hid) =>
+                  assetMap[hid] ? (
+                    <AssetThumb key={hid} asset={assetMap[hid]} />
+                  ) : (
+                    <div key={hid} className="text-[10px] text-muted-foreground">
+                      Missing {hid}
+                    </div>
+                  )
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function AssetThumb({ asset }: { asset: Asset }) {
+  const src = asset.thumbnail_path ? getThumbnailUrl(asset) : getAssetUrl(asset);
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-16 w-16 rounded-md object-cover border border-muted-foreground/20 bg-muted"
+      loading="lazy"
+    />
   );
 }
