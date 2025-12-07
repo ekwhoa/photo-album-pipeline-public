@@ -32,6 +32,8 @@ import {
   type Asset,
   type PagePreview,
   type AutoHiddenDuplicateCluster,
+  type BookSegmentDebugResponse,
+  type SegmentDebugDay,
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
@@ -57,6 +59,45 @@ export default function BookDetailPage() {
   const dedupe = useBookDedupeDebug(id);
   const segments = useBookSegmentDebug(id);
   const [expandedSegmentDays, setExpandedSegmentDays] = useState<Set<number>>(new Set());
+
+  const dayIndexByPageIndex = useMemo(() => {
+    const map: Record<number, number> = {};
+    let dayCounter = 0;
+    pages.forEach((p) => {
+      if (p.page_type === 'day_intro') {
+        map[p.index] = dayCounter;
+        dayCounter += 1;
+      }
+    });
+    return map;
+  }, [pages]);
+
+  const daySegmentSummaryByIndex = useMemo(() => {
+    if (!segments.data?.days) return {};
+    const result: Record<number, { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null }> = {};
+    for (const day of segments.data.days) {
+      const segmentsList = day.segments || [];
+      const segmentsCount = segmentsList.length;
+      let totalDurationMinutes = 0;
+      let totalDistanceKm = 0;
+      let hasDistance = false;
+      for (const seg of segmentsList) {
+        if (typeof seg.duration_minutes === 'number') {
+          totalDurationMinutes += seg.duration_minutes;
+        }
+        if (typeof seg.approx_distance_km === 'number') {
+          totalDistanceKm += seg.approx_distance_km;
+          hasDistance = true;
+        }
+      }
+      result[day.day_index] = {
+        segmentsCount,
+        totalDurationMinutes,
+        totalDistanceKm: hasDistance ? totalDistanceKm : null,
+      };
+    }
+    return result;
+  }, [segments.data]);
   const assetsById = useMemo(() => {
     const map: Record<string, Asset> = {};
     assets.forEach((a) => {
@@ -679,6 +720,11 @@ export default function BookDetailPage() {
                         assets={assets}
                         bookTitle={book.title}
                         onClick={() => setSelectedPage(page)}
+                        segmentSummary={
+                          page.page_type === 'day_intro'
+                            ? daySegmentSummaryByIndex[dayIndexByPageIndex[page.index]]
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
@@ -800,4 +846,17 @@ function formatDuration(mins?: number | null) {
 function formatDistance(km?: number | null) {
   if (km === null || km === undefined) return 'Distance: —';
   return `Distance: ~${km.toFixed(1)} km`;
+}
+
+function formatSegmentsLine(summary?: { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null }) {
+  if (!summary || summary.segmentsCount <= 0) return '';
+  const parts: string[] = [];
+  parts.push(`${summary.segmentsCount} ${summary.segmentsCount === 1 ? 'segment' : 'segments'}`);
+  if (summary.totalDurationMinutes > 0) {
+    parts.push(formatDuration(summary.totalDurationMinutes).replace('Duration: ', ''));
+  }
+  if (summary.totalDistanceKm != null && summary.totalDistanceKm > 0.1) {
+    parts.push(`~${summary.totalDistanceKm.toFixed(1)} km`);
+  }
+  return parts.join(' • ');
 }

@@ -9,6 +9,7 @@ interface PagePreviewCardProps {
   assets: Asset[]; // unused, kept for prop compatibility
   bookTitle?: string;
   onClick?: () => void;
+  segmentSummary?: { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null };
 }
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
@@ -39,7 +40,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   itinerary: <Calendar className="h-4 w-4" />,
 };
 
-export function PagePreviewCard({ page, assets, bookTitle, onClick }: PagePreviewCardProps) {
+export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSummary }: PagePreviewCardProps) {
   const label = PAGE_TYPE_LABELS[page.page_type] || page.page_type;
   const icon = PAGE_ICONS[page.page_type] || <Image className="h-4 w-4" />;
   const assetMap = useMemo(() => {
@@ -71,6 +72,11 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick }: PagePrevie
               {icon}
               <span className="font-medium text-foreground">{label}</span>
               <p className="line-clamp-3 text-muted-foreground">{page.summary}</p>
+              {page.page_type === 'day_intro' && segmentSummary && segmentSummary.segmentsCount > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  {formatSegmentSummary(segmentSummary)}
+                </p>
+              )}
             </div>
           )}
 
@@ -101,4 +107,23 @@ function SpreadImage({ src, slot }: { src: string; slot: 'left' | 'right' }) {
       <img src={src} alt="" className={cls} />
     </div>
   );
+}
+
+function formatDurationShort(minutes: number) {
+  if (!minutes || minutes <= 0) return '';
+  const hours = minutes / 60;
+  if (hours < 1) return '<1 h';
+  if (hours >= 10) return `${Math.round(hours)} h`;
+  return `${hours.toFixed(1)} h`;
+}
+
+function formatSegmentSummary(summary: { segmentsCount: number; totalDurationMinutes: number; totalDistanceKm: number | null }) {
+  const parts: string[] = [];
+  parts.push(`${summary.segmentsCount} ${summary.segmentsCount === 1 ? 'segment' : 'segments'}`);
+  const dur = formatDurationShort(summary.totalDurationMinutes);
+  if (dur) parts.push(dur);
+  if (summary.totalDistanceKm != null && summary.totalDistanceKm > 0.1) {
+    parts.push(`~${summary.totalDistanceKm.toFixed(1)} km`);
+  }
+  return parts.join(' • ');
 }

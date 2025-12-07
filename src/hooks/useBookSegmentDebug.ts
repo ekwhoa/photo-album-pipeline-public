@@ -14,14 +14,10 @@ export function useBookSegmentDebug(bookId: string | undefined) {
     booksApi
       .getSegmentDebug(bookId)
       .then((res) => {
-        if (!cancelled) {
-          setData(res);
-        }
+        if (!cancelled) setData(res);
       })
       .catch((err: Error) => {
-        if (!cancelled) {
-          setError(err.message || 'Failed to load segment info');
-        }
+        if (!cancelled) setError(err.message || 'Failed to load segment info');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
