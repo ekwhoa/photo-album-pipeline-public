@@ -67,7 +67,7 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
       <CardContent className="p-0">
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc) ? (
-            <SpreadImage src={heroSrc} alt={page.summary || 'Photo spread'} />
+            <SpreadImage src={heroSrc} alt={page.summary || 'Photo spread'} slot={spreadSlot} />
           ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
             <PhotoGridPreview page={page} assetMap={assetMap} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
@@ -115,34 +115,20 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
 function SpreadImage({
   src,
   alt = '',
-  className = '',
+  slot,
 }: {
   src: string;
   alt?: string;
-  className?: string;
+  slot: 'left' | 'right';
 }) {
-  const wrapperClassName = ['flex gap-1 w-full', className]
-    .filter(Boolean)
-    .join(' ');
-
+  const sideClass = slot === 'right' ? 'spread-img-right' : 'spread-img-left';
   return (
-    <div className={wrapperClassName}>
-      <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
-        <img
-          src={src}
-          alt={alt || 'Left page'}
-          className="h-full w-full object-cover"
-          style={{ objectPosition: 'left center' }}
-        />
-      </div>
-      <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
-        <img
-          src={src}
-          alt={alt || 'Right page'}
-          className="h-full w-full object-cover"
-          style={{ objectPosition: 'right center' }}
-        />
-      </div>
+    <div className="spread-frame">
+      <img
+        src={src}
+        alt={alt}
+        className={`spread-img ${sideClass}`}
+      />
     </div>
   );
 }

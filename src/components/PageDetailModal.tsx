@@ -95,7 +95,7 @@ export function PageDetailModal({
 
         <div className="mt-4">
           {page.page_type === 'photo_spread' && heroSrc ? (
-            <SpreadDetail src={heroSrc} />
+            <SpreadDetail src={heroSrc} alt={page.summary || 'Photo spread'} />
           ) : page.page_type === 'photo_grid' ? (
             <PhotoGridDetail page={page} assets={assets} />
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
@@ -209,7 +209,7 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
   );
 }
 
-function SpreadDetail({ src }: { src: string }) {
+function SpreadDetail({ src, alt }: { src: string; alt?: string }) {
   return (
     <div className="w-full flex justify-center">
       <div className="w-full max-w-4xl">
@@ -217,7 +217,7 @@ function SpreadDetail({ src }: { src: string }) {
           <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
             <img
               src={src}
-              alt="Left page"
+              alt={alt || 'Left page'}
               className="h-full w-full object-cover"
               style={{ objectPosition: 'left center' }}
             />
@@ -225,7 +225,7 @@ function SpreadDetail({ src }: { src: string }) {
           <div className="relative w-1/2 aspect-[4/3] overflow-hidden rounded-md bg-muted">
             <img
               src={src}
-              alt="Right page"
+              alt={alt || 'Right page'}
               className="h-full w-full object-cover"
               style={{ objectPosition: 'right center' }}
             />
