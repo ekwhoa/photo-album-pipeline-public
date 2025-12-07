@@ -4,7 +4,7 @@ Book planner service.
 Takes organized days/events and creates a Book structure with
 front cover, trip summary, interior pages, and back cover.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import date
 from domain.models import (
     Asset, Book, BookSize, Day, Page, PageType
@@ -121,9 +121,25 @@ def plan_book(
     if map_route_page:
         all_interior_pages.append(map_route_page)
     all_interior_pages.extend(interior_pages)
+
+    # Debug accounting
+    approved_ids = set(all_asset_ids)
+    used_ids = set(deduped_ids)
+    hidden_ids = set()
+    for cluster in dedup_summary.get("clusters", []):
+        hidden_ids.update(cluster.get("hidden_asset_ids", []))
+        hero = cluster.get("kept_asset_id")
+        if hero:
+            used_ids.add(hero)
+    # Include cover hero if it comes from approved assets
+    if hero_asset_id:
+        used_ids.add(hero_asset_id)
+    unused_ids = sorted(list(approved_ids - used_ids - hidden_ids))
+
     print(
         f"[planner] Assets: approved={len(assets)} used={len(deduped_ids)} "
-        f"auto_hidden_duplicates={dedup_summary.get('dropped', 0)}"
+        f"auto_hidden_duplicates={dedup_summary.get('dropped', 0)} "
+        f"unused={len(unused_ids)}"
     )
     
     # Create back cover (last page)
@@ -143,6 +159,8 @@ def plan_book(
         front_cover=front_cover,
         pages=all_interior_pages,
         back_cover=back_cover,
+        auto_hidden_duplicate_clusters=dedup_summary.get("clusters", []),
+        unused_approved_asset_ids=unused_ids,
     )
 
 
@@ -223,10 +241,11 @@ def compute_gps_stats(assets: List[Asset]) -> Tuple[int, int]:
     return gps_photo_count, len(distinct_set)
 
 
-def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) -> Tuple[List[str], Dict[str, int]]:
+def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) -> Tuple[List[str], Dict[str, Any]]:
     """Remove near-duplicates per day while preserving chronological order."""
     kept: List[str] = []
     dropped = 0
+    clusters: List[Dict[str, Any]] = []
 
     # Group asset IDs by day index based on appearance order in the original list
     # Day boundaries are assumed to be reflected in order of asset_ids passed in.
@@ -235,13 +254,14 @@ def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) 
     current_day_date: Optional[date] = None
 
     def flush_day(ids: List[str]):
-        nonlocal dropped
+        nonlocal dropped, clusters
         # Within a day, sort by taken_at (fallback to as-is) and cluster
         sorted_ids = sorted(
             ids,
             key=lambda aid: asset_lookup.get(aid).metadata.taken_at if asset_lookup.get(aid) and asset_lookup.get(aid).metadata else None,
         )
         clustered_keep: List[str] = []
+        local_clusters: List[List[str]] = []
 
         def is_near_duplicate(a_id: str, b_id: str) -> bool:
             a = asset_lookup.get(a_id)
@@ -262,11 +282,36 @@ def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) 
                 return True
             return False
 
+        current_cluster: List[str] = []
         for aid in sorted_ids:
-            if any(is_near_duplicate(aid, kept_id) for kept_id in clustered_keep):
-                dropped += 1
+            if not current_cluster:
+                current_cluster = [aid]
                 continue
-            clustered_keep.append(aid)
+            if is_near_duplicate(aid, current_cluster[-1]):
+                current_cluster.append(aid)
+            else:
+                local_clusters.append(current_cluster)
+                current_cluster = [aid]
+        if current_cluster:
+            local_clusters.append(current_cluster)
+
+        cluster_counter = 0
+        for cluster in local_clusters:
+            if len(cluster) == 1:
+                clustered_keep.append(cluster[0])
+                continue
+            cluster_counter += 1
+            hero = _select_cluster_hero(cluster, asset_lookup)
+            clustered_keep.append(hero)
+            hidden = [aid for aid in cluster if aid != hero]
+            dropped += len(hidden)
+            clusters.append(
+                {
+                    "cluster_id": f"day_{current_day_date}_{cluster_counter}",
+                    "kept_asset_id": hero,
+                    "hidden_asset_ids": hidden,
+                }
+            )
 
         kept.extend(clustered_keep)
 
@@ -289,7 +334,22 @@ def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) 
     if current_day_assets:
         flush_day(current_day_assets)
 
-    return kept, {"dropped": dropped}
+    return kept, {"dropped": dropped, "clusters": clusters}
+
+
+def _select_cluster_hero(cluster: List[str], asset_lookup: Dict[str, Asset]) -> str:
+    """Pick a representative asset from a near-duplicate cluster."""
+    def score(aid: str) -> Tuple[int, float]:
+        asset = asset_lookup.get(aid)
+        if not asset or not asset.metadata:
+            return 0, 0.0
+        w = asset.metadata.width or 0
+        h = asset.metadata.height or 0
+        area = w * h
+        ts = asset.metadata.taken_at.timestamp() if asset.metadata.taken_at else 0.0
+        return area, ts
+
+    return max(cluster, key=score)
 
 
 def _create_trip_summary_page(

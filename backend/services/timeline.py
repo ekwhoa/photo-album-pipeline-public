@@ -5,8 +5,8 @@ This is a key extension point for smarter photo organization.
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import List, Optional
-from domain.models import Day, Event, Manifest, ManifestEntry
+from typing import List, Optional, Dict
+from domain.models import Asset, Day, Event, Manifest, ManifestEntry
 
 
 def build_days_and_events(manifest: Manifest) -> List[Day]:
@@ -133,3 +133,42 @@ def split_by_location(entries: List[ManifestEntry],
     """
     # TODO: Implement using haversine distance
     return [entries]
+
+
+class TimelineService:
+    """Lightweight organizer to group assets by day for planning."""
+
+    def organize_assets_by_day(self, assets: List[Asset]) -> List[Day]:
+        # Group assets by taken_at date (fallback: unknown)
+        grouped: Dict[str, List[Asset]] = defaultdict(list)
+        for asset in assets:
+            if asset.metadata and asset.metadata.taken_at:
+                key = asset.metadata.taken_at.date().isoformat()
+            else:
+                key = "unknown"
+            grouped[key].append(asset)
+
+        days: List[Day] = []
+        for idx, (key, group) in enumerate(sorted(grouped.items())):
+            # Sort within day by taken_at
+            group_sorted = sorted(
+                group,
+                key=lambda a: a.metadata.taken_at if a.metadata and a.metadata.taken_at else datetime.min,
+            )
+            entries = [
+                ManifestEntry(asset_id=a.id, timestamp=a.metadata.taken_at if a.metadata else None)
+                for a in group_sorted
+            ]
+            event = Event(index=0, entries=entries, name=f"Day {idx + 1}" if key != "unknown" else "Photos")
+            for i, entry in enumerate(entries):
+                entry.day_index = idx
+                entry.event_index = 0
+            day_date = None
+            if key != "unknown":
+                try:
+                    day_date = datetime.fromisoformat(key)
+                except Exception:
+                    day_date = None
+            days.append(Day(index=idx, date=day_date, events=[event]))
+
+        return days

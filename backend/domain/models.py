@@ -159,6 +159,8 @@ class Book:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     last_generated: Optional[datetime] = None
     pdf_path: Optional[str] = None
+    auto_hidden_duplicate_clusters: List[Dict[str, Any]] = field(default_factory=list)
+    unused_approved_asset_ids: List[str] = field(default_factory=list)
     
     @staticmethod
     def generate_id() -> str:

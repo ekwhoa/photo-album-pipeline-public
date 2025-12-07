@@ -6,9 +6,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from db import SessionLocal
-from domain.models import Book, BookSize
+from domain.models import Book, BookSize, PageType
 from repositories import BooksRepository, AssetsRepository
 from storage.file_storage import FileStorage
+from services.book_planner import plan_book
+from services.timeline import TimelineService
 
 router = APIRouter()
 books_repo = BooksRepository()
@@ -46,6 +48,53 @@ def book_to_response(book: Book, asset_count: int, approved_count: int) -> BookR
         last_generated=book.last_generated.isoformat() if book.last_generated else None,
         pdf_path=book.pdf_path,
     )
+
+
+class DedupeDebugResponse(BaseModel):
+    book_id: str
+    approved_count: int
+    used_count: int
+    auto_hidden_duplicates_count: int
+    auto_hidden_duplicate_clusters: List[dict]
+    unused_approved_count: int
+    unused_approved_asset_ids: List[str]
+
+
+@router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
+async def dedupe_debug(book_id: str):
+    """Return dedupe metadata for a book without altering existing endpoints."""
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        approved_assets = assets_repo.list_assets(session, book_id, status=None)
+        timeline_service = TimelineService()
+        days = timeline_service.organize_assets_by_day(approved_assets)
+
+        planned = plan_book(
+            book_id=book.id,
+            title=book.title,
+            size=book.size,
+            days=days,
+            assets=approved_assets,
+        )
+
+        total, approved_count = assets_repo.count_by_book(session, book.id)
+        used_count = sum(
+            len(page.payload.get("asset_ids", []))
+            for page in planned.pages
+            if page.page_type == PageType.PHOTO_GRID
+        )
+        return DedupeDebugResponse(
+            book_id=book.id,
+            approved_count=approved_count,
+            used_count=used_count,
+            auto_hidden_duplicates_count=len(planned.auto_hidden_duplicate_clusters),
+            auto_hidden_duplicate_clusters=planned.auto_hidden_duplicate_clusters,
+            unused_approved_count=len(planned.unused_approved_asset_ids),
+            unused_approved_asset_ids=planned.unused_approved_asset_ids,
+        )
 
 
 @router.get("", response_model=List[BookResponse])
