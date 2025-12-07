@@ -29,7 +29,9 @@ import {
   type Book,
   type Asset,
   type PagePreview,
+  type AutoHiddenDuplicateCluster,
 } from '@/lib/api';
+import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { toast } from 'sonner';
 
 export default function BookDetailPage() {
@@ -48,6 +50,8 @@ export default function BookDetailPage() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showClusters, setShowClusters] = useState(false);
+  const dedupe = useBookDedupeDebug(id);
 
   const loadBook = async () => {
     if (!id) return;
@@ -466,6 +470,36 @@ export default function BookDetailPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between">
+                <div>
+                  <CardTitle>Curation report (beta)</CardTitle>
+                  <CardDescription>Read-only dedupe/debug info from the planner.</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {dedupe.loading && <p className="text-sm text-muted-foreground">Loading curation info…</p>}
+                {dedupe.error && (
+                  <p className="text-sm text-destructive">Curation info unavailable: {dedupe.error}</p>
+                )}
+                {!dedupe.loading && !dedupe.error && dedupe.data && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      <Stat label="Approved" value={dedupe.data.approved_count} />
+                      <Stat label="Used in book" value={dedupe.data.used_count} />
+                      <Stat label="Auto-hidden assets" value={dedupe.data.auto_hidden_hidden_assets_count} />
+                      <Stat label="Clusters" value={dedupe.data.auto_hidden_clusters_count} />
+                    </div>
+                    <ClusterList
+                      clusters={dedupe.data.auto_hidden_duplicate_clusters}
+                      show={showClusters}
+                      onToggle={() => setShowClusters((v) => !v)}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Preview Tab */}
@@ -573,6 +607,51 @@ export default function BookDetailPage() {
           />
         </Tabs>
       </main>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="p-3 rounded-md bg-muted/60">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="font-semibold text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function ClusterList({
+  clusters,
+  show,
+  onToggle,
+}: {
+  clusters: AutoHiddenDuplicateCluster[];
+  show: boolean;
+  onToggle: () => void;
+}) {
+  if (!clusters || clusters.length === 0) {
+    return <p className="text-sm text-muted-foreground">No duplicate clusters detected.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-sm text-primary hover:underline"
+      >
+        {show ? 'Hide clusters' : `Show clusters (${clusters.length})`}
+      </button>
+      {show && (
+        <div className="max-h-64 overflow-auto space-y-2 rounded-md border border-muted-foreground/10 p-2 bg-muted/40">
+          {clusters.map((cluster) => (
+            <div key={cluster.cluster_id} className="rounded-md border border-muted-foreground/20 bg-background p-2">
+              <div className="text-xs font-semibold text-muted-foreground">Cluster: {cluster.cluster_id}</div>
+              <div className="text-xs">Kept: {cluster.kept_asset_id}</div>
+              <div className="text-xs">Hidden: {cluster.hidden_asset_ids.join(', ') || '—'}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -55,6 +55,22 @@ export interface UploadResponse {
   stats: UploadStats;
 }
 
+export interface AutoHiddenDuplicateCluster {
+  cluster_id: string;
+  kept_asset_id: string;
+  hidden_asset_ids: string[];
+}
+
+export interface BookDedupeDebug {
+  book_id: string;
+  approved_count: number;
+  considered_count: number;
+  used_count: number;
+  auto_hidden_clusters_count: number;
+  auto_hidden_hidden_assets_count: number;
+  auto_hidden_duplicate_clusters: AutoHiddenDuplicateCluster[];
+}
+
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -82,6 +98,7 @@ export const booksApi = {
   list: () => apiRequest<Book[]>('/books'),
   
   get: (id: string) => apiRequest<Book>(`/books/${id}`),
+  getDedupeDebug: (id: string) => apiRequest<BookDedupeDebug>(`/books/${id}/dedupe_debug`),
   
   create: (data: { title: string; size: string }) =>
     apiRequest<Book>('/books', {
