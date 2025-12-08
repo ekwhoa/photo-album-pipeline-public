@@ -261,19 +261,34 @@ def layout_photo_grid(page: Page, context: RenderContext) -> PageLayout:
                 ))
     
     elif layout_type == "grid_2x3":
-        # 2 columns, 3 rows
-        photo_width = (content_width - gap) / 2
-        photo_height = (content_height - 2 * gap) / 3
-        for i, asset_id in enumerate(asset_ids[:6]):
-            row = i // 2
-            col = i % 2
-            elements.append(LayoutRect(
-                x_mm=margin + col * (photo_width + gap),
-                y_mm=margin + row * (photo_height + gap),
-                width_mm=photo_width,
-                height_mm=photo_height,
-                asset_id=asset_id,
-            ))
+        if layout_variant == "grid_6_simple" and len(asset_ids) >= 6:
+            # 3 columns x 2 rows
+            photo_width = (content_width - 2 * gap) / 3
+            photo_height = (content_height - gap) / 2
+            for i, asset_id in enumerate(asset_ids[:6]):
+                row = i // 3
+                col = i % 3
+                elements.append(LayoutRect(
+                    x_mm=margin + col * (photo_width + gap),
+                    y_mm=margin + row * (photo_height + gap),
+                    width_mm=photo_width,
+                    height_mm=photo_height,
+                    asset_id=asset_id,
+                ))
+        else:
+            # 2 columns, 3 rows
+            photo_width = (content_width - gap) / 2
+            photo_height = (content_height - 2 * gap) / 3
+            for i, asset_id in enumerate(asset_ids[:6]):
+                row = i // 2
+                col = i % 2
+                elements.append(LayoutRect(
+                    x_mm=margin + col * (photo_width + gap),
+                    y_mm=margin + row * (photo_height + gap),
+                    width_mm=photo_width,
+                    height_mm=photo_height,
+                    asset_id=asset_id,
+                ))
     
     elif layout_type == "grid_3x3":
         # 3x3 grid

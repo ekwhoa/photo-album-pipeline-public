@@ -247,6 +247,15 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
     );
   }
 
+  if (variant === 'grid_6_simple' && gridAssets.length >= 6) {
+    const slice = gridAssets.slice(0, 6);
+    return (
+      <div className="grid grid-cols-3 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg min-h-[360px]">
+        {slice.map((asset) => renderImage(asset))}
+      </div>
+    );
+  }
+
   if (variant === 'grid_4_simple' && gridAssets.length >= 4) {
     return (
       <div className="grid grid-cols-3 grid-rows-2 gap-2 bg-muted/30 p-3 rounded-lg">

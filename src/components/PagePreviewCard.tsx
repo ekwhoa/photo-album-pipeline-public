@@ -204,6 +204,15 @@ function PhotoGridPreview({ page, assetMap }: { page: BookPage; assetMap: Record
     );
   }
 
+  if (variant === 'grid_6_simple' && assets.length >= 6) {
+    const slice = assets.slice(0, 6);
+    return (
+      <div className="grid grid-cols-3 grid-rows-2 gap-1 w-full h-full p-1">
+        {slice.map((asset) => renderImg(asset))}
+      </div>
+    );
+  }
+
   // Default 4-up (original layout / fallback)
   return (
     <div className="grid grid-cols-2 grid-rows-2 gap-1 w-full h-full p-1">
