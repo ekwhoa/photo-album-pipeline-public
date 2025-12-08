@@ -518,15 +518,18 @@ def _render_trip_summary_card(
                 stats.append(elem.text)
 
     stats = [s for s in stats if s.strip()]
-    grid_items = "".join(
-        f"""
-        <div class="stat-card">
-            <div class="stat-value">{line.split(':')[1].strip()}</div>
-            <div class="stat-label">{line.split(':')[0].strip()}</div>
-        </div>
-        """
-        for line in stats
-    )
+    stats_line_parts: List[str] = []
+    for line in stats:
+        if ":" in line:
+            label, value = line.split(":", 1)
+            label = label.strip().lower()
+            value = value.strip()
+            if value and value != "0":
+                if label.endswith("s"):
+                    stats_line_parts.append(f"{value} {label}")
+                else:
+                    stats_line_parts.append(f"{value} {label}s")
+    stats_line = " • ".join(stats_line_parts)
 
     return f"""
     <div class="page trip-summary-page" style="
@@ -572,38 +575,16 @@ def _render_trip_summary_card(
                 color: {theme.secondary_color};
                 margin: 0;
             }}
-            .trip-summary-stats {{
-                width: 100%;
-                display: flex;
-                flex-direction: column;
-                gap: 6mm;
-            }}
-            .stat-card {{
-                padding: 6mm;
-                background: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 8px;
-                box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
-            }}
-            .stat-value {{
-                font-family: {theme.title_font_family};
-                font-size: 18pt;
-                margin-bottom: 2mm;
-                color: {theme.primary_color};
-            }}
-            .stat-label {{
-                font-size: 10pt;
+            .trip-summary-meta {{
+                font-size: 12pt;
                 color: {theme.secondary_color};
-                letter-spacing: 0.3pt;
-                text-transform: uppercase;
+                margin: 4mm 0 0 0;
             }}
         </style>
         <div class="trip-summary-card">
             <h1 class="trip-summary-title">{title}</h1>
             <p class="trip-summary-subtitle">{subtitle}</p>
-            <div class="trip-summary-stats">
-                {grid_items}
-            </div>
+            {f'<p class=\"trip-summary-meta\">{stats_line}</p>' if stats_line else ''}
         </div>
     </div>
     """
