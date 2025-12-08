@@ -559,6 +559,10 @@ def _build_photo_pages_with_optional_spread(
         return pages, start_index, spread_used
 
     spread_hero_id = asset_ids[0] if asset_ids else None
+    total_photos = len(asset_ids)
+    # For small 4-up days, skip spread handling and just build grids
+    if photos_per_page == 4 and total_photos <= 24:
+        spread_hero_id = None
     i = 0
     current_index = start_index
 
