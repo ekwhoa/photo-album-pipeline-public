@@ -386,6 +386,12 @@ def _render_map_route_card(
 
     subtitle = " • ".join(stats_lines)
 
+    segments = getattr(layout, "segments", []) or []
+    seg_count = len(segments)
+    seg_total_hours = sum((s.get("duration_hours") or 0.0) for s in segments)
+    seg_total_km = sum((s.get("distance_km") or 0.0) for s in segments)
+    seg_summary = format_day_segment_summary(seg_count, seg_total_hours, seg_total_km)
+
     figure_html = ""
     if image_src:
         figure_html = f"""
@@ -465,11 +471,18 @@ def _render_map_route_card(
                 border: 1px dashed #cbd5e1;
                 font-size: 12pt;
             }}
+            .map-route-segment-summary {{
+                margin: 6px 0 4px 0;
+                font-size: 12pt;
+                color: {theme.primary_color};
+                text-align: center;
+            }}
         </style>
         <div class="map-route-card">
             <h1 class="map-route-title">{title}</h1>
             <p class="map-route-subtitle">{subtitle}</p>
             {figure_html}
+            {f'<div class=\"map-route-segment-summary\">{seg_summary}</div>' if seg_summary else ''}
         </div>
     </div>
     """
