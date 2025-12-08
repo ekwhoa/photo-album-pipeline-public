@@ -37,6 +37,7 @@ export const PAGE_TYPE_LABELS: Record<PageType, string> = {
 
 export type GridLayoutVariant =
   | 'default'
+  | 'grid_3_hero'
   | 'grid_4_simple'
   | 'grid_2up'
   | 'grid_3up_hero'

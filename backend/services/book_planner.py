@@ -1109,9 +1109,12 @@ def choose_grid_layout_variant(photo_count: int) -> str:
     """
     Return a layout_variant string for a photo_grid page.
 
+    - 3 photos: use hero + two below ("grid_3_hero")
     - 4 photos: use the hero + 3 below layout ("grid_4_simple")
     - everything else: stick with "default"
     """
+    if photo_count == 3:
+        return "grid_3_hero"
     if photo_count == 4:
         return "grid_4_simple"
     return "default"

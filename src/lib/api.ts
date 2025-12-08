@@ -36,7 +36,7 @@ export interface PagePreview {
   summary: string;
   asset_ids?: string[];
   hero_asset_id?: string | null;
-  layout_variant?: 'default' | 'grid_4_simple' | 'grid_2up' | 'grid_3up_hero' | 'grid_6_dense' | null;
+  layout_variant?: 'default' | 'grid_3_hero' | 'grid_4_simple' | 'grid_2up' | 'grid_3up_hero' | 'grid_6_dense' | null;
   segment_count?: number;
   segments_total_distance_km?: number;
   segments_total_duration_hours?: number;

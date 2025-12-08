@@ -222,6 +222,15 @@ function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) 
     );
   }
 
+  if (variant === 'grid_3_hero' && gridAssets.length >= 3) {
+    return (
+      <div className="grid grid-cols-2 grid-rows-[auto_auto] gap-2 bg-muted/30 p-3 rounded-lg min-h-[360px]">
+        <div className="col-span-2">{renderImage(gridAssets[0])}</div>
+        {gridAssets.slice(1, 3).map((asset) => renderImage(asset))}
+      </div>
+    );
+  }
+
   if (variant === 'grid_6_dense' && gridAssets.length >= 5) {
     const slice = gridAssets.slice(0, 6);
     return (

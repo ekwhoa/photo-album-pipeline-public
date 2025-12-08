@@ -170,6 +170,15 @@ function PhotoGridPreview({ page, assetMap }: { page: BookPage; assetMap: Record
     );
   }
 
+  if (variant === 'grid_3_hero' && assets.length >= 3) {
+    return (
+      <div className="grid grid-cols-2 grid-rows-[auto_auto] gap-1 w-full h-full p-1">
+        <div className="col-span-2">{renderImg(assets[0])}</div>
+        {assets.slice(1, 3).map((asset) => renderImg(asset))}
+      </div>
+    );
+  }
+
   if (variant === 'grid_6_dense' && assets.length >= 5) {
     const slice = assets.slice(0, 6);
     return (
