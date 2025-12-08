@@ -458,12 +458,16 @@ def _render_map_route_card(
                 border: 1px solid #cbd5e1;
                 box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
                 padding: 6mm;
+                max-height: 130mm;
+                overflow: hidden;
             }}
             .map-route-figure img {{
                 width: 100%;
                 height: auto;
+                max-height: 118mm;
                 display: block;
                 border-radius: 6px;
+                object-fit: contain;
             }}
             .map-route-placeholder {{
                 width: 100%;
