@@ -158,6 +158,7 @@ def plan_book(
     day_intro_pages_count = 0
     spread_used = False
     full_hero_count = 0
+    map_route_segments: List[Dict[str, Any]] = []
     for day_index, day_date, day_ids in day_asset_sets:
         day_photo_count = len(day_ids)
         full_page_photos_for_day = 0
@@ -170,6 +171,17 @@ def plan_book(
         )
         day_segments, _, _, _, _ = _build_segments_for_day(ordered_assets_for_segments)
         segment_count = len(day_segments)
+        day_segment_summaries = _build_segment_summaries(day_segments, asset_lookup, index_offset=0)
+        global_segment_summaries = _build_segment_summaries(
+            day_segments, asset_lookup, index_offset=len(map_route_segments)
+        )
+        map_route_segments.extend(global_segment_summaries)
+        segments_total_distance_km = sum(s.get("distance_km") or 0.0 for s in day_segment_summaries)
+        segments_total_duration_hours = sum(
+            (s.get("duration_hours") or 0.0)
+            for s in day_segment_summaries
+            if s.get("duration_hours") is not None
+        )
         profile = compute_day_layout_profile(day_photo_count, segment_count)
         asset_to_segment: Dict[str, int] = {}
         for seg in day_segments:
@@ -187,6 +199,10 @@ def plan_book(
                     "day_date": day_date.isoformat() if day_date else None,
                     "display_date": display_date,
                     "day_photo_count": day_photo_count,
+                    "segment_count": segment_count,
+                    "segments_total_distance_km": segments_total_distance_km,
+                    "segments_total_duration_hours": segments_total_duration_hours,
+                    "segments": day_segment_summaries,
                 },
             )
         )
@@ -238,6 +254,10 @@ def plan_book(
     # Combine trip summary + optional map route + photo grids
     all_interior_pages = [trip_summary]
     if map_route_page:
+        # Inject segment summaries into map route payload
+        payload = map_route_page.payload or {}
+        payload["segments"] = map_route_segments
+        map_route_page.payload = payload
         all_interior_pages.append(map_route_page)
     all_interior_pages.extend(interior_pages)
     all_interior_pages = _ensure_layout_variants(all_interior_pages)
@@ -868,6 +888,42 @@ def _build_segments_for_day(day_assets: List[Asset]) -> Tuple[List[Dict[str, Any
         )
     kept_breaks = len(segments) - 1
     return out, large_gap_count, large_move_count, candidate_breaks, kept_breaks
+
+
+def _build_segment_summaries(
+    segments: List[Dict[str, Any]],
+    asset_lookup: Dict[str, Asset],
+    index_offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """Create lightweight segment summaries for day intro / map pages."""
+    summaries: List[Dict[str, Any]] = []
+    for idx, seg in enumerate(segments):
+        assets_in_seg = [asset_lookup.get(aid) for aid in seg.get("asset_ids", []) if aid in asset_lookup]
+        polyline: List[Tuple[float, float]] = []
+        for a in assets_in_seg:
+            if (
+                a
+                and a.metadata
+                and a.metadata.gps_lat is not None
+                and a.metadata.gps_lon is not None
+            ):
+                polyline.append((a.metadata.gps_lat, a.metadata.gps_lon))
+
+        duration_minutes = seg.get("duration_minutes")
+        duration_hours = duration_minutes / 60.0 if duration_minutes is not None else None
+        distance_km = seg.get("approx_distance_km", 0.0) or 0.0
+
+        summaries.append(
+            {
+                "index": index_offset + idx + 1,  # 1-based
+                "distance_km": distance_km,
+                "duration_hours": duration_hours,
+                "start_label": None,  # placeholder; no reverse geocoding
+                "end_label": None,
+                "polyline": polyline if polyline else None,
+            }
+        )
+    return summaries
 
 
 def get_book_segment_debug(book_id: str, days: List[Day], assets: List[Asset]) -> Dict[str, Any]:
