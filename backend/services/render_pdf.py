@@ -339,22 +339,6 @@ def _generate_book_html(
             .page.page--full-page-photo {
                 border: 1px solid #e5e7eb;
             }
-            .trip-summary-content {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                min-height: 60mm;
-            }
-            .trip-summary-content h1 {
-                margin: 0 0 6px 0;
-            }
-            .trip-summary-content p {
-                margin: 0 0 6px 0;
-            }
-            .trip-summary-content p:last-child {
-                margin-bottom: 0;
-            }
         </style>
         """
 
@@ -598,11 +582,9 @@ def _render_trip_summary_card(
             }}
         </style>
         <div class="trip-summary-card">
-            <div class="trip-summary-content">
-                <h1 class="trip-summary-title">{title}</h1>
-                <p class="trip-summary-subtitle">{subtitle}</p>
-                {f'<p class=\"trip-summary-meta\">{stats_line}</p>' if stats_line else ''}
-            </div>
+            <h1 class="trip-summary-title">{title}</h1>
+            <p class="trip-summary-subtitle">{subtitle}</p>
+            {f'<p class=\"trip-summary-meta\">{stats_line}</p>' if stats_line else ''}
         </div>
     </div>
     """
