@@ -31,6 +31,77 @@ def get_pdf_layout_variant(page: Any, photo_count: int) -> str:
         return "grid_4_simple"
     return "default"
 
+def format_day_segment_summary(segment_count: Optional[int], total_hours: Optional[float], total_km: Optional[float]) -> str:
+    """Return a summary line like '3 segments • 8.4 h • ~1492.6 km'."""
+    count = segment_count or 0
+    if count <= 0:
+        return ""
+    parts: List[str] = []
+    parts.append(f"{count} {'segment' if count == 1 else 'segments'}")
+    if total_hours and total_hours > 0:
+        parts.append(f"{total_hours:.1f} h")
+    if total_km and total_km > 0:
+        parts.append(f"~{total_km:.1f} km")
+    return " • ".join(parts)
+
+
+def format_segment_line(index: int, segment: Dict[str, Any]) -> str:
+    """Return a printable line for a single segment."""
+    parts: List[str] = [f"Segment {index}"]
+    hours = segment.get("duration_hours")
+    km = segment.get("distance_km")
+    if isinstance(hours, (int, float)) and hours > 0:
+        parts.append(f"{hours:.1f} h")
+    if isinstance(km, (int, float)) and km > 0:
+        parts.append(f"{km:.1f} km")
+    return " • ".join(parts)
+
+
+def build_day_intro_tagline(
+    segment_count: Optional[int],
+    total_hours: Optional[float],
+    total_km: Optional[float],
+) -> str:
+    """
+    Mirror the frontend's day intro narrative line.
+    Example: "Big travel day  8.4 h out and about • ~1492.6 km traveled"
+    """
+    hours = total_hours or 0.0
+    km = total_km or 0.0
+    count = segment_count or 0
+    far = km >= 100
+    medium = 10 <= km < 100
+    long_day = hours >= 8
+    short_day = hours < 3
+
+    label = "Easygoing day"
+    if far:
+        label = "Big travel day"
+    elif long_day and medium:
+        label = "Full-day exploring"
+    elif short_day and km < 5:
+        label = "Chill day nearby"
+    elif long_day:
+        label = "Long day out"
+    elif medium:
+        label = "Out and about"
+
+    # If there's really no movement/segments, skip
+    if count <= 0 and hours <= 0 and km <= 0:
+        return ""
+
+    duration_label = f"{hours:.1f} h out and about"
+    distance_label = f"~{km:.1f} km traveled" if km > 0 else ""
+    parts = [label, duration_label]
+    if distance_label:
+        parts.append(distance_label)
+
+    if len(parts) == 2:
+        return "  ".join(parts)
+    if len(parts) == 3:
+        return "  ".join(parts[:2]) + f" • {parts[2]}"
+    return ""
+
 
 def render_book_to_pdf(
     book: Book,
@@ -542,6 +613,26 @@ def _render_day_intro(
             header = elem.text
         elif elem.font_size and elem.font_size <= 12:
             photos = elem.text
+    segment_count = getattr(layout, "segment_count", None)
+    total_hours = getattr(layout, "segments_total_duration_hours", None)
+    total_km = getattr(layout, "segments_total_distance_km", None)
+    summary_line = format_day_segment_summary(
+        segment_count,
+        total_hours,
+        total_km,
+    )
+    tagline = build_day_intro_tagline(
+        segment_count,
+        total_hours,
+        total_km,
+    )
+    segment_lines: List[str] = []
+    for idx, seg in enumerate(getattr(layout, "segments", []) or []):
+        try:
+            segment_lines.append(format_segment_line(idx + 1, seg))
+        except Exception:
+            continue
+
     return f"""
     <div class="page day-intro-page" style="
         position: relative;
@@ -559,6 +650,9 @@ def _render_day_intro(
             <div style="font-size: 12pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
             <div style="font-size: 24pt; font-family: {theme.title_font_family}; color: {theme.primary_color};">{title}</div>
             {f'<div style="font-size: 12pt; color: {theme.secondary_color};">{photos}</div>' if photos else ''}
+            {f'<div style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
+            {f'<div style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
+            {f'<ul style=\"list-style: disc; margin: 6px auto 0; padding: 0 18px; text-align: left; max-width: 80%; color: {theme.primary_color};\">' + ''.join([f'<li style=\"font-size: 10pt; margin: 2px 0;\">{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
         </div>
     </div>
     """

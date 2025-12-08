@@ -321,3 +321,8 @@ class PageLayout:
     elements: List[LayoutRect] = field(default_factory=list)
     spread_slot: Optional[str] = None  # For photo_spread pages ("left"|"right")
     layout_variant: Optional[str] = None
+    # Optional segment metadata for day/map pages
+    segment_count: Optional[int] = None
+    segments_total_distance_km: Optional[float] = None
+    segments_total_duration_hours: Optional[float] = None
+    segments: Optional[List[dict]] = None

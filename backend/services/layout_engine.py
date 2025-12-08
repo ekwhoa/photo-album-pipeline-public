@@ -362,6 +362,10 @@ def layout_day_intro(page: Page, context: RenderContext) -> PageLayout:
         page_type=page.page_type,
         background_color=theme.background_color,
         elements=elements,
+        segment_count=page.payload.get("segment_count"),
+        segments_total_distance_km=page.payload.get("segments_total_distance_km"),
+        segments_total_duration_hours=page.payload.get("segments_total_duration_hours"),
+        segments=page.payload.get("segments"),
     )
 
 
@@ -495,6 +499,10 @@ def layout_map_route(page: Page, context: RenderContext) -> PageLayout:
         page_type=page.page_type,
         background_color=theme.background_color,
         elements=elements,
+        segment_count=page.payload.get("segment_count"),
+        segments_total_distance_km=page.payload.get("segments_total_distance_km"),
+        segments_total_duration_hours=page.payload.get("segments_total_duration_hours"),
+        segments=page.payload.get("segments"),
     )
 
 
