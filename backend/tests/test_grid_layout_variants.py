@@ -52,7 +52,45 @@ def test_plan_day_prefers_six_plus_four_for_ten_photos():
         start_index=0,
         spread_used=True,
     )
-    sizes = [len(p.payload.get("asset_ids") or []) for p in pages if p.page_type == PageType.PHOTO_GRID]
-    assert sizes == [6, 4]
-    variants = [p.payload.get("layout_variant") for p in pages if p.page_type == PageType.PHOTO_GRID]
-    assert variants[0] == "grid_6_simple"
+    grid_pages = [p for p in pages if p.page_type == PageType.PHOTO_GRID]
+    sizes = [len(p.payload.get("asset_ids") or []) for p in grid_pages]
+    assert sorted(sizes) == [4, 6]
+    six_pages = [p for p in grid_pages if len(p.payload.get("asset_ids") or []) == 6]
+    assert len(six_pages) == 1
+    assert six_pages[0].payload.get("layout_variant") == "grid_6_simple"
+
+
+def test_plan_day_with_multiple_of_four_photos_uses_only_four_up():
+    asset_ids = [str(i) for i in range(24)]
+    pages, _, _ = _build_photo_pages_with_optional_spread(
+        asset_ids,
+        photos_per_page=4,
+        asset_lookup={},
+        start_index=0,
+        spread_used=False,
+    )
+    grid_pages = [p for p in pages if p.page_type == PageType.PHOTO_GRID]
+    sizes = [len(p.payload.get("asset_ids") or []) for p in grid_pages]
+    assert all(size == 4 for size in sizes)
+    assert all(
+        (p.payload.get("layout_variant") or "").startswith("grid_4") or p.payload.get("layout_variant") in (None, "default")
+        for p in grid_pages
+    )
+
+
+def test_plan_day_with_fourteen_photos_uses_one_six_up_to_fix_tail():
+    asset_ids = [str(i) for i in range(14)]
+    pages, _, _ = _build_photo_pages_with_optional_spread(
+        asset_ids,
+        photos_per_page=4,
+        asset_lookup={},
+        start_index=0,
+        spread_used=False,
+    )
+    grid_pages = [p for p in pages if p.page_type == PageType.PHOTO_GRID]
+    sizes = [len(p.payload.get("asset_ids") or []) for p in grid_pages]
+    assert sizes.count(6) == 1
+    assert all(size in (4, 6) for size in sizes)
+    six_pages = [p for p in grid_pages if len(p.payload.get("asset_ids") or []) == 6]
+    assert len(six_pages) == 1
+    assert six_pages[0].payload.get("layout_variant") == "grid_6_simple"

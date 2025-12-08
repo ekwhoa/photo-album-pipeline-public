@@ -562,36 +562,60 @@ def _build_photo_pages_with_optional_spread(
     i = 0
     current_index = start_index
 
-    def _partition_batches(remaining: List[str]) -> List[List[str]]:
+    def _chunk_day_for_grids(remaining: List[str]) -> List[List[str]]:
         """
-        Partition remaining assets into batches using allowed sizes {6,4,3} with fallbacks to avoid 1-2 where possible.
+        Chunk a day's photos using 4-up by default, introducing 6-up only to fix bad remainders.
+
+        Remainder rules (n = len(remaining)):
+          - n % 4 == 0: all 4-up
+          - n % 4 == 1 and n >= 9: last 12 become two 6-up pages
+          - n % 4 == 2 and n >= 6: last 10 become one 6-up + one 4-up
+          - n % 4 == 3: leave as 4/3 mixes
+
+        Order is preserved; at most two 6-up pages per day.
         """
-        sizes = [6, 4, 3, 2, 1]
-        penalty = {1: 10, 2: 8, 3: 0, 4: 0, 6: -1}
         n = len(remaining)
-        dp: List[Optional[tuple]] = [None] * (n + 1)
-        dp[0] = (0, 0, 0, [])  # (penalty, pages, six_count, plan)
-        for k in range(1, n + 1):
-            best = None
-            for s in sizes:
-                if k - s < 0 or dp[k - s] is None:
-                    continue
-                base_pen, base_pages, base_six, base_plan = dp[k - s]
-                cand = (
-                    base_pen + penalty.get(s, 0),
-                    base_pages + 1,
-                    base_six + (1 if s == 6 else 0),
-                    base_plan + [s],
-                )
-                if best is None or cand < best:
-                    best = cand
-            dp[k] = best
-        plan_sizes = dp[n][3] if dp[n] else [len(remaining)]
+        if n == 0:
+            return []
+
         batches: List[List[str]] = []
+
+        def take(sz: int, start_idx: int) -> List[str]:
+            return remaining[start_idx : start_idx + sz]
+
+        remainder = n % 4
+        if remainder == 0:
+            for idx in range(0, n, 4):
+                batches.append(take(4, idx))
+            return batches
+
+        if remainder == 1 and n >= 9:
+            lead = n - 12
+            for idx in range(0, lead, 4):
+                batches.append(take(4, idx))
+            batches.append(take(6, lead))
+            batches.append(take(6, lead + 6))
+            return batches
+
+        if remainder == 2 and n >= 6:
+            lead = n - 10
+            for idx in range(0, lead, 4):
+                batches.append(take(4, idx))
+            batches.append(take(6, lead))
+            batches.append(take(4, lead + 6))
+            return batches
+
         idx = 0
-        for sz in plan_sizes:
-            batches.append(remaining[idx : idx + sz])
-            idx += sz
+        while idx < n:
+            take_size = 4
+            if n - idx == 3:
+                take_size = 3
+            elif n - idx == 2:
+                take_size = 2
+            elif n - idx == 1:
+                take_size = 1
+            batches.append(take(take_size, idx))
+            idx += take_size
         return batches
 
     while i < len(asset_ids):
@@ -683,7 +707,7 @@ def _build_photo_pages_with_optional_spread(
             continue
 
         remaining = asset_ids[i:]
-        batches = _partition_batches(remaining)
+        batches = _chunk_day_for_grids(remaining)
         for batch in batches:
             if not batch:
                 continue
