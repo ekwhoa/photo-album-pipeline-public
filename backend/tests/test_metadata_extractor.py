@@ -167,8 +167,8 @@ class TestExtractExifWithMockedExif:
         img.save(buffer, format="JPEG")
         buffer.seek(0)
         
-        # Mock _getexif to return test data
-        with patch.object(Image.Image, "_getexif") as mock_exif:
+        # Mock getexif to return test data
+        with patch.object(Image.Image, "getexif", create=True) as mock_exif:
             mock_exif.return_value = {
                 36867: "2024:01:15 10:30:00",  # DateTimeOriginal tag
                 271: "Apple",  # Make
@@ -202,7 +202,7 @@ class TestExtractExifWithMockedExif:
             6: 10.5,  # GPSAltitude
         }
         
-        with patch.object(Image.Image, "_getexif") as mock_exif:
+        with patch.object(Image.Image, "getexif", create=True) as mock_exif:
             mock_exif.return_value = {
                 34853: gps_info,  # GPSInfo tag
             }

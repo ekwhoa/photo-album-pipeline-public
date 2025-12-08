@@ -407,6 +407,7 @@ def layout_day_intro(page: Page, context: RenderContext) -> PageLayout:
         segments_total_duration_hours=page.payload.get("segments_total_duration_hours"),
         segments=page.payload.get("segments"),
         book_id=page.payload.get("book_id"),
+        photos_count=photo_count,
     )
 
 

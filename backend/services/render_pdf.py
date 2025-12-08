@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
 from services import map_route_renderer
+from services.blurb_engine import (
+    TripSummaryContext,
+    DayIntroContext,
+    build_trip_summary_blurb,
+    build_day_intro_tagline,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -58,102 +64,6 @@ def format_segment_line(index: int, segment: Dict[str, Any]) -> str:
     if isinstance(km, (int, float)) and km > 0:
         parts.append(f"{km:.1f} km")
     return " • ".join(parts)
-
-
-def _pluralize(count: Optional[int], singular: str, plural: Optional[str] = None) -> str:
-    """Return a properly pluralized label."""
-    if count is None:
-        return singular
-    if count == 1:
-        return f"1 {singular}"
-    return f"{count} {plural or singular + 's'}"
-
-
-def _format_hours(hours: Optional[float]) -> str:
-    """Format hours with one decimal, hiding near-zero values."""
-    if hours is None:
-        return ""
-    if hours < 0.05:
-        return ""
-    return f"{hours:.1f} h"
-
-
-def _format_km(km: Optional[float]) -> str:
-    """Format distance in km with one decimal, hiding near-zero values."""
-    if km is None:
-        return ""
-    if km < 0.05:
-        return ""
-    return f"~{km:.1f} km"
-
-
-def build_day_intro_tagline(
-    segment_count: Optional[int],
-    total_hours: Optional[float],
-    total_km: Optional[float],
-) -> str:
-    """
-    Generate a concise blurb for a day intro.
-
-    Categories:
-    - Big travel day: very large distance.
-    - Full-day exploring / Out and about: moderate movement or time.
-    - Chill day nearby: very low distance + duration.
-    - Easygoing day: fallback.
-    """
-    hours = total_hours or 0.0
-    km = total_km or 0.0
-    count = segment_count or 0
-
-    if count <= 0 and hours <= 0.05 and km <= 0.05:
-        return ""
-
-    far = km >= 400
-    exploring = (km >= 5 and km < 400) or hours >= 4
-    chill = km < 5 and hours < 3
-    long_day = hours >= 8
-
-    if far:
-        label = "Big travel day"
-    elif exploring and long_day:
-        label = "Full-day exploring"
-    elif exploring:
-        label = "Out and about"
-    elif chill:
-        label = "Chill day nearby"
-    else:
-        label = "Easygoing day"
-
-    parts: List[str] = [label]
-
-    hours_str = _format_hours(hours)
-    km_str = _format_km(km)
-
-    if label in ("Big travel day",):
-        if km_str:
-            parts.append(f"{km_str} traveled")
-        if hours_str:
-            parts.append(f"{hours_str} in transit")
-    elif label in ("Full-day exploring", "Out and about"):
-        if hours_str:
-            parts.append(f"{hours_str} out and about")
-        if km_str:
-            parts.append(f"{km_str} covered")
-    elif label == "Chill day nearby":
-        if hours_str or km_str:
-            detail = "short walks close to home"
-            if hours_str:
-                detail = f"{hours_str} of light wandering"
-            parts.append(detail)
-        else:
-            parts.append("low-key and close to home")
-    else:
-        if hours_str:
-            parts.append(f"{hours_str} out and about")
-        if km_str:
-            parts.append(f"{km_str} covered")
-
-    return " • ".join([p for p in parts if p])
 
 
 def render_book_to_pdf(
@@ -587,6 +497,10 @@ def _render_trip_summary_card(
 
     stats = [s for s in stats if s.strip()]
     stats_line_parts: List[str] = []
+    num_days = None
+    num_photos = None
+    num_events = None
+    num_locations = None
     for line in stats:
         if ":" in line:
             label, value = line.split(":", 1)
@@ -597,7 +511,28 @@ def _render_trip_summary_card(
                     stats_line_parts.append(f"{value} {label}")
                 else:
                     stats_line_parts.append(f"{value} {label}s")
+                try:
+                    numeric_value = int(value)
+                except ValueError:
+                    numeric_value = None
+                if "day" in label:
+                    num_days = numeric_value
+                elif "photo" in label:
+                    num_photos = numeric_value
+                elif "event" in label:
+                    num_events = numeric_value
+                elif "location" in label or "spot" in label:
+                    num_locations = numeric_value
     stats_line = " • ".join(stats_line_parts)
+    blurb = ""
+    if num_days is not None and num_photos is not None:
+        ctx = TripSummaryContext(
+            num_days=num_days,
+            num_photos=num_photos,
+            num_events=num_events,
+            num_locations=num_locations,
+        )
+        blurb = build_trip_summary_blurb(ctx)
 
     return f"""
     <div class="page trip-summary-page" style="
@@ -648,10 +583,21 @@ def _render_trip_summary_card(
                 color: {theme.secondary_color};
                 margin: 4mm 0 0 0;
             }}
+            .trip-summary-blurb {{
+                font-size: 12pt;
+                color: {theme.primary_color};
+                margin: 2mm 0 0 0;
+            }}
+            .trip-summary-blurb {{
+                font-size: 12pt;
+                color: {theme.primary_color};
+                margin: 2mm 0 0 0;
+            }}
         </style>
         <div class="trip-summary-card">
             <h1 class="trip-summary-title">{title}</h1>
             <p class="trip-summary-subtitle">{subtitle}</p>
+            {f'<p class=\"trip-summary-blurb\">{blurb}</p>' if blurb else ''}
             {f'<p class=\"trip-summary-meta\">{stats_line}</p>' if stats_line else ''}
         </div>
     </div>
@@ -694,11 +640,12 @@ def _render_day_intro(
         total_hours,
         total_km,
     )
-    tagline = build_day_intro_tagline(
-        segment_count,
-        total_hours,
-        total_km,
+    tagline_ctx = DayIntroContext(
+        photos_count=getattr(layout, "photos_count", 0) or 0,
+        segments_total_distance_km=total_km,
+        segment_count=segment_count,
     )
+    tagline = build_day_intro_tagline(tagline_ctx)
     segment_lines: List[str] = []
     for idx, seg in enumerate(getattr(layout, "segments", []) or []):
         try:

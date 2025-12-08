@@ -327,5 +327,6 @@ class PageLayout:
     segments_total_distance_km: Optional[float] = None
     segments_total_duration_hours: Optional[float] = None
     segments: Optional[List[dict]] = None
+    photos_count: Optional[int] = None
     # Optional book identifier for downstream rendering
     book_id: Optional[str] = None
