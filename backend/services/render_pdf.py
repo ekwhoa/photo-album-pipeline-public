@@ -412,6 +412,7 @@ def _render_map_route_card(
         background: {bg_color};
         font-family: {theme.font_family};
         color: {theme.primary_color};
+        page-break-after: always;
     ">
         <style>
             .map-route-page {{
@@ -423,7 +424,7 @@ def _render_map_route_card(
             .map-route-card {{
                 max-width: 190mm;
                 width: 88%;
-                margin: 18mm auto 14mm;
+                margin: 18mm auto 18mm;
                 padding: 14mm 12mm;
                 background: #f8fafc;
                 border: 1px solid #d9e2ec;
@@ -529,6 +530,7 @@ def _render_trip_summary_card(
         background: {bg_color};
         font-family: {theme.font_family};
         color: {theme.primary_color};
+        page-break-after: always;
     ">
         <style>
             .trip-summary-page {{
@@ -540,7 +542,7 @@ def _render_trip_summary_card(
             .trip-summary-card {{
                 max-width: 190mm;
                 width: 88%;
-                margin: 18mm auto 14mm;
+                margin: 18mm auto 18mm;
                 padding: 14mm 12mm;
                 background: #f8fafc;
                 border: 1px solid #d9e2ec;
