@@ -17,7 +17,7 @@ import type { Asset } from '@/lib/api';
 import type { BookPage, GridLayoutVariant } from '@/types/book';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
 import clsx from 'clsx';
-import { formatDaySegmentSummary, formatSegmentBlurb } from '@/lib/segmentFormat';
+import { formatDaySegmentSummary, formatSegmentBlurb, formatSegmentLegendItem } from '@/lib/segmentFormat';
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   front_cover: 'Front Cover',
@@ -96,6 +96,27 @@ export function PageDetailModal({
             </div>
           ) : page.page_type === 'photo_grid' ? (
             <PhotoGridDetail page={page} assets={assets} />
+          ) : page.page_type === 'map_route' ? (
+            <div className="space-y-4">
+              {page.summary && (
+                <p className="text-sm text-muted-foreground">{page.summary}</p>
+              )}
+              {heroSrc && (
+                <div className="photo-full-inner w-full h-full flex items-center justify-center bg-muted/30 rounded-lg p-4">
+                  <img src={heroSrc} alt={page.summary || 'Map route'} className="photo-full-image max-h-[70vh]" />
+                </div>
+              )}
+              {page.segments && page.segments.length > 0 && (
+                <div className="bg-muted/20 rounded-lg p-3">
+                  <h4 className="text-sm font-semibold text-foreground mb-2">Segments</h4>
+                  <ul className="text-sm text-muted-foreground space-y-1">
+                    {page.segments.map((segment, idx) => (
+                      <li key={segment.index ?? idx}>{formatSegmentLegendItem(segment, idx + 1)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           ) : (page.page_type === 'photo_full' || page.page_type === 'full_page_photo') && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center bg-muted/30 rounded-lg p-4">
               <img src={heroSrc} alt="" className="photo-full-image max-h-[70vh]" />
