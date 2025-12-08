@@ -719,8 +719,16 @@ def _build_photo_pages_with_optional_spread(
             continue
 
         remaining = asset_ids[i:]
-        batches = _chunk_day_for_grids(remaining)
-        for batch in batches:
+        batch_sizes = _chunk_day_for_grids(remaining)
+        offset = 0
+        for sz in batch_sizes:
+            batch: List[str] = []
+            while offset < len(remaining) and len(batch) < sz:
+                candidate = remaining[offset]
+                offset += 1
+                if spread_hero_id and not spread_used and candidate == spread_hero_id:
+                    continue
+                batch.append(candidate)
             if not batch:
                 continue
             if len(batch) == 1:
@@ -747,7 +755,6 @@ def _build_photo_pages_with_optional_spread(
                     )
                 )
             current_index += 1
-        # consumed all remaining
         i = len(asset_ids)
 
     return pages, current_index, spread_used
