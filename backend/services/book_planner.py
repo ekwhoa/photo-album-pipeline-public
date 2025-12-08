@@ -728,18 +728,23 @@ def _apply_segment_grid_variants(
             continue
         payload = page.payload or {}
         asset_ids = payload.get("asset_ids") or []
-        # default baseline
-        payload["layout_variant"] = "default"
+        existing_variant = payload.get("layout_variant")
         if len(asset_ids) != 4:
+            if existing_variant is None:
+                payload["layout_variant"] = "default"
             page.payload = payload
             continue
         segments = {asset_to_segment.get(aid) for aid in asset_ids}
         segments.discard(None)
         if len(segments) != 1:
+            if existing_variant is None:
+                payload["layout_variant"] = "default"
             page.payload = payload
             continue
         seg_idx = next(iter(segments))
         if seg_idx in chosen_segments:
+            if existing_variant is None:
+                payload["layout_variant"] = "default"
             page.payload = payload
             continue
         payload["layout_variant"] = "grid_4_simple"
