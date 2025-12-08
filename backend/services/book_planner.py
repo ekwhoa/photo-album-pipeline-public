@@ -565,7 +565,7 @@ def _build_photo_pages_with_optional_spread(
     def _chunk_day_for_grids(remaining: List[str]) -> List[List[str]]:
         """
         Given the remaining photo IDs for a day (after any spread/hero handling),
-        chunk them into batches for photo grids.
+        chunk them into batches of asset_ids for photo grids.
 
         Heuristics:
         - Prefer 4-up grids as the default.
@@ -573,6 +573,8 @@ def _build_photo_pages_with_optional_spread(
         - Use a single 6-up grid for exactly 6 photos.
         - When there is a remainder of 2 with enough photos, convert the last 10
           into one 6-up + one 4-up to avoid a lonely 2-up.
+        - When there is a remainder of 1 with enough photos, convert the last 12
+          into two 6-up pages.
         """
         n = len(remaining)
         if n == 0:
@@ -719,43 +721,31 @@ def _build_photo_pages_with_optional_spread(
             continue
 
         remaining = asset_ids[i:]
-        batch_sizes = _chunk_day_for_grids(remaining)
-        offset = 0
-        for sz in batch_sizes:
-            batch: List[str] = []
-            while offset < len(remaining) and len(batch) < sz:
-                candidate = remaining[offset]
-                offset += 1
-                if spread_hero_id and not spread_used and candidate == spread_hero_id:
-                    continue
-                batch.append(candidate)
+        grid_batches = _chunk_day_for_grids(remaining)
+
+        for batch in grid_batches:
             if not batch:
                 continue
-            if len(batch) == 1:
-                pages.append(
-                    Page(
-                        index=current_index,
-                        page_type=PageType.FULL_PAGE_PHOTO,
-                        payload={
-                            "asset_ids": batch,
-                            "hero_asset_id": batch[0],
-                        },
-                    )
+
+            layout_value = _select_grid_layout(len(batch), photos_per_page)
+            payload = {
+                "asset_ids": batch,
+                "layout": layout_value,
+                "layout_variant": choose_grid_layout_variant(len(batch)),
+            }
+
+            pages.append(
+                Page(
+                    index=current_index,
+                    page_type=PageType.PHOTO_GRID,
+                    payload=payload,
                 )
-            else:
-                pages.append(
-                    Page(
-                        index=current_index,
-                        page_type=PageType.PHOTO_GRID,
-                        payload={
-                            "asset_ids": batch,
-                            "layout": _select_grid_layout(len(batch), photos_per_page),
-                            "layout_variant": choose_grid_layout_variant(len(batch)),
-                        },
-                    )
-                )
+            )
             current_index += 1
-        i = len(asset_ids)
+
+        # Consumed all remaining assets for this day.
+        i += len(remaining)
+        continue
 
     return pages, current_index, spread_used
 
