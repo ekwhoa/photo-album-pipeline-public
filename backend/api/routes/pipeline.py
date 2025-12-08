@@ -111,7 +111,7 @@ async def generate_book(book_id: str):
             theme=Theme(),
         )
         all_pages = book.get_all_pages()
-        layouts = compute_all_layouts(all_pages, context)
+        layouts = compute_all_layouts(all_pages, context, book_id=book.id)
         
         # Render PDF
         pdf_relative_path = storage.get_pdf_path(book_id)
@@ -275,7 +275,7 @@ async def get_preview_html(book_id: str, request: Request):
             theme=Theme(),
         )
         try:
-            layouts = compute_all_layouts(all_pages, context)
+            layouts = compute_all_layouts(all_pages, context, book_id=book.id)
             assets_dict = {a.id: a for a in approved_assets}
             base_media_url = f"{str(request.base_url).rstrip('/')}/media"
             html_content = render_book_to_html(
@@ -318,7 +318,7 @@ async def get_page_preview_html(book_id: str, page_index: int, request: Request)
         )
 
         try:
-            layouts = compute_all_layouts(all_pages, context)
+            layouts = compute_all_layouts(all_pages, context, book_id=book.id)
             layout = next((l for l in layouts if l.page_index == page_index), None)
             if layout is None:
                 raise HTTPException(status_code=404, detail="Page not found")

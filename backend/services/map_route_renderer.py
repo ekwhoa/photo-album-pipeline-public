@@ -44,8 +44,8 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
 def render_day_route_image(
     book_id: str,
     segments: Sequence[dict],
-    width: int = 800,
-    height: int = 400,
+    width: int = 900,
+    height: int = 300,
     filename_prefix: Optional[str] = None,
 ) -> Tuple[str, str]:
     """
@@ -59,6 +59,14 @@ def render_day_route_image(
     if filename_prefix is None:
         filename_prefix = "day_route"
     return _render_route_image(book_id, points, width=width, height=height, filename_prefix=filename_prefix)
+
+
+def render_day_route_map(book_id: str, segments: Sequence[dict]) -> Tuple[str, str]:
+    """
+    Public helper to mirror render_route_map but for a day's segments.
+    Returns (relative_path, absolute_path).
+    """
+    return render_day_route_image(book_id, segments, width=900, height=300, filename_prefix="day_route")
 
 
 def _render_route_image(

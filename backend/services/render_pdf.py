@@ -718,16 +718,16 @@ def _render_day_intro(
             .day-intro-segments li {{
                 margin: 2px 0;
             }}
-            .day-intro-mini-map-wrapper {{
-                margin-top: 10mm;
-                margin-bottom: 8mm;
-                text-align: center;
-            }}
             .day-intro-mini-map {{
-                max-width: 100%;
-                max-height: 60mm;
-                border-radius: 4px;
-                display: inline-block;
+                margin-top: 18px;
+                display: flex;
+                justify-content: center;
+            }}
+            .day-intro-mini-map img {{
+                max-width: 70%;
+                height: auto;
+                border-radius: 8px;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
             }}
         </style>
         <div class="day-intro-center">
@@ -736,7 +736,7 @@ def _render_day_intro(
             {f'<div class=\"day-intro-photos\" style=\"font-size: 12pt; color: {theme.secondary_color};\">{photos}</div>' if photos else ''}
             {f'<div class=\"day-intro-tagline\" style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
             {f'<div class=\"day-intro-summary\" style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
-            {f'<div class=\"day-intro-mini-map-wrapper\"><img class=\"day-intro-mini-map\" src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
+            {f'<div class=\"day-intro-mini-map\"><img src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
             {f'<ul class=\"day-intro-segments\">' + ''.join([f'<li>{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
         </div>
     </div>
