@@ -33,6 +33,10 @@ class PagePreviewResponse(BaseModel):
     asset_ids: List[str] | None = None
     hero_asset_id: str | None = None
     layout_variant: str | None = None
+    segment_count: int | None = None
+    segments_total_distance_km: float | None = None
+    segments_total_duration_hours: float | None = None
+    segments: List[dict] | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -154,6 +158,10 @@ async def get_pages(book_id: str):
             asset_ids = None
             hero_asset_id = None
             layout_variant = None
+            segment_count = None
+            segments_total_distance_km = None
+            segments_total_duration_hours = None
+            segments = None
             if page.page_type.value == "front_cover":
                 summary = f"Title: {page.payload.get('title', 'Untitled')}"
                 hero_asset_id = page.payload.get("hero_asset_id")
@@ -172,6 +180,7 @@ async def get_pages(book_id: str):
             elif page.page_type.value == "map_route":
                 gps_photo_count = page.payload.get("gps_photo_count")
                 distinct_locations = page.payload.get("distinct_locations")
+                segments = page.payload.get("segments")
                 if gps_photo_count is not None and distinct_locations is not None:
                     summary = f"Map route: {gps_photo_count} photos with location across ~{distinct_locations} spots"
                 else:
@@ -184,6 +193,10 @@ async def get_pages(book_id: str):
                 day_index = page.payload.get("day_index")
                 display_date = page.payload.get("display_date") or page.payload.get("day_date") or "Day"
                 photo_count = page.payload.get("day_photo_count")
+                segment_count = page.payload.get("segment_count")
+                segments_total_distance_km = page.payload.get("segments_total_distance_km")
+                segments_total_duration_hours = page.payload.get("segments_total_duration_hours")
+                segments = page.payload.get("segments")
                 summary = f"Day {day_index}: {display_date}"
                 if photo_count is not None:
                     summary += f" • {photo_count} photos"
@@ -204,6 +217,10 @@ async def get_pages(book_id: str):
                 asset_ids=asset_ids,
                 hero_asset_id=hero_asset_id,
                 layout_variant=layout_variant,
+                segment_count=segment_count,
+                segments_total_distance_km=segments_total_distance_km,
+                segments_total_duration_hours=segments_total_duration_hours,
+                segments=segments,
             ))
         
         return previews
