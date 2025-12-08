@@ -55,6 +55,10 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assetMap[heroId] : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
+  const spreadSlotRaw =
+    (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
+    (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
+  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? (page.index % 2 === 0 ? 'left' : 'right');
 
   return (
     <Card
@@ -65,7 +69,12 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
           {(page.page_type === 'photo_spread' && heroSrc) ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center p-2">
-              <img src={heroSrc} alt="Photo spread hero" className="photo-full-image" />
+              <img
+                src={heroSrc}
+                alt="Photo spread hero"
+                className="photo-full-image"
+                style={{ objectPosition: spreadSlot === 'left' ? 'left center' : 'right center' }}
+              />
             </div>
           ) : page.page_type === 'photo_grid' && (page.asset_ids?.length || 0) > 0 ? (
             <PhotoGridPreview page={page} assetMap={assetMap} />

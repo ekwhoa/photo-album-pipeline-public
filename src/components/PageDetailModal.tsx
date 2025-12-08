@@ -79,6 +79,10 @@ export function PageDetailModal({
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assets.find((a) => a.id === heroId) : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
+  const spreadSlotRaw =
+    (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
+    (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
+  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? (page.index % 2 === 0 ? 'left' : 'right');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -92,7 +96,12 @@ export function PageDetailModal({
         <div className="mt-4">
           {page.page_type === 'photo_spread' && heroSrc ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center bg-muted/30 rounded-lg p-4">
-              <img src={heroSrc} alt={page.summary || 'Photo spread'} className="photo-full-image max-h-[70vh]" />
+              <img
+                src={heroSrc}
+                alt={page.summary || 'Photo spread'}
+                className="photo-full-image max-h-[70vh]"
+                style={{ objectPosition: spreadSlot === 'left' ? 'left center' : 'right center' }}
+              />
             </div>
           ) : page.page_type === 'photo_grid' ? (
             <PhotoGridDetail page={page} assets={assets} />
