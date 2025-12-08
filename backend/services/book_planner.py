@@ -263,6 +263,7 @@ def plan_book(
     all_interior_pages = _apply_daily_grid_hero_variants(all_interior_pages)
     all_interior_pages = _tune_four_photo_variants(all_interior_pages, asset_lookup)
     all_interior_pages = _ensure_layout_variants(all_interior_pages)
+    all_interior_pages = insert_blank_pages_for_layout(all_interior_pages)
 
     # Debug accounting
     db_approved_ids = set(all_asset_ids)
@@ -1272,6 +1273,83 @@ def _tune_four_photo_variants(
         else:
             last_variant = chosen
             run_length = 1
+
+    return result
+
+
+def _make_blank_page() -> Page:
+    """Create a synthetic blank page placeholder."""
+    return Page(
+        index=-1,
+        page_type=PageType.BLANK,
+        payload={"summary": "Blank page"},
+    )
+
+
+def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
+    """
+    Insert blank pages to enforce layout parity:
+    - Day intros should land on a right-hand page (interior index even).
+    - Photo spread pairs (same hero) should start on a left-hand page (interior index odd).
+    Starts counting interior pages at the first day_intro.
+    """
+    result: List[Page] = []
+    interior_started = False
+    interior_idx = 0  # 0 => right, 1 => left
+    i = 0
+    while i < len(pages):
+        page = pages[i]
+
+        # Wait for first day_intro to start parity enforcement
+        if not interior_started:
+            result.append(page)
+            if page.page_type == PageType.DAY_INTRO:
+                interior_started = True
+                interior_idx = 0
+                # enforce day_intro on right
+                if interior_idx % 2 == 1:
+                    result.insert(-1, _make_blank_page())
+                    interior_idx += 1
+            i += 1
+            continue
+
+        # Day intro parity: must be on right (even)
+        if page.page_type == PageType.DAY_INTRO:
+            if interior_idx % 2 == 1:
+                result.append(_make_blank_page())
+                interior_idx += 1
+            result.append(page)
+            interior_idx += 1
+            i += 1
+            continue
+
+        # Photo spread pair handling
+        if (
+            page.page_type == PageType.PHOTO_SPREAD
+            and i + 1 < len(pages)
+            and pages[i + 1].page_type == PageType.PHOTO_SPREAD
+        ):
+            hero_a = page.payload.get("hero_asset_id")
+            hero_b = pages[i + 1].payload.get("hero_asset_id")
+            if hero_a and hero_a == hero_b:
+                if interior_idx % 2 == 0:
+                    result.append(_make_blank_page())
+                    interior_idx += 1
+                result.append(page)
+                interior_idx += 1
+                result.append(pages[i + 1])
+                interior_idx += 1
+                i += 2
+                continue
+
+        # Default: just append and advance
+        result.append(page)
+        interior_idx += 1
+        i += 1
+
+    # Reindex pages
+    for idx, page in enumerate(result):
+        page.index = idx
 
     return result
 

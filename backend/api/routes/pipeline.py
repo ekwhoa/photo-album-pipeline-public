@@ -207,6 +207,8 @@ async def get_pages(book_id: str):
                 if not asset_ids and hero_asset_id:
                     asset_ids = [hero_asset_id]
                 hero_asset_id = hero_asset_id
+            elif page.page_type.value == "blank":
+                summary = "Blank page"
             else:
                 summary = page.page_type.value
             

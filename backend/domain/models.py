@@ -42,6 +42,7 @@ class PageType(str, Enum):
     """
     # Currently implemented
     FRONT_COVER = "front_cover"
+    BLANK = "blank"
     PHOTO_GRID = "photo_grid"
     BACK_COVER = "back_cover"
     DAY_INTRO = "day_intro"

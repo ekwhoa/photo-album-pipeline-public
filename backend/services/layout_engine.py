@@ -134,6 +134,17 @@ def layout_front_cover(page: Page, context: RenderContext) -> PageLayout:
     )
 
 
+@register_layout(PageType.BLANK)
+def layout_blank(page: Page, context: RenderContext) -> PageLayout:
+    """Blank page layout."""
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=context.theme.background_color,
+        elements=[],
+    )
+
+
 @register_layout(PageType.PHOTO_GRID)
 def layout_photo_grid(page: Page, context: RenderContext) -> PageLayout:
     """

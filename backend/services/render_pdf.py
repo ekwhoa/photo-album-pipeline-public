@@ -279,6 +279,23 @@ def _render_photo_grid_from_elements(
     </div>
     """
 
+
+def _render_blank_page(theme: Theme, width_mm: float, height_mm: float) -> str:
+    """Render a truly blank page."""
+    return f"""
+    <div class="page pdf-page-blank" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: #ffffff;
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+        page-break-after: always;
+    ">
+    </div>
+    """
+
+
 def _generate_book_html(
     book: Book,
     layouts: List[PageLayout],
@@ -824,6 +841,8 @@ def _render_page_html(
     media_base_url: str | None = None,
 ) -> str:
     """Render a single page to HTML."""
+    if layout.page_type == PageType.BLANK:
+        return _render_blank_page(theme, width_mm, height_mm)
     if layout.page_type == PageType.MAP_ROUTE:
         return _render_map_route_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.TRIP_SUMMARY:
