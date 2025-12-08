@@ -261,6 +261,7 @@ def plan_book(
         all_interior_pages.append(map_route_page)
     all_interior_pages.extend(interior_pages)
     all_interior_pages = _apply_daily_grid_hero_variants(all_interior_pages)
+    all_interior_pages = _tune_four_photo_variants(all_interior_pages, asset_lookup)
     all_interior_pages = _ensure_layout_variants(all_interior_pages)
 
     # Debug accounting
@@ -1144,15 +1145,11 @@ def _apply_daily_grid_hero_variants(pages: List[Page]) -> List[Page]:
     """
     Apply per-day hero grid variants:
     - 3-photo grids: grid_3_hero when unset/default.
-    - 4-photo grids: only the first grid after a day_intro gets grid_4_simple
-      when unset/default; subsequent 4-photo grids fall back to default.
     Resets the per-day flag when encountering a day_intro.
     """
     result: List[Page] = []
-    used_grid4 = False
     for page in pages:
         if page.page_type == PageType.DAY_INTRO:
-            used_grid4 = False
             result.append(page)
             continue
 
@@ -1167,14 +1164,114 @@ def _apply_daily_grid_hero_variants(pages: List[Page]) -> List[Page]:
 
         if len(asset_ids) == 3 and variant_is_default:
             payload["layout_variant"] = "grid_3_hero"
-        elif len(asset_ids) == 4:
-            if not used_grid4 and variant_is_default:
-                payload["layout_variant"] = "grid_4_simple"
-                used_grid4 = True
-            elif variant_is_default:
-                payload["layout_variant"] = "default"
+        elif variant_is_default:
+            payload["layout_variant"] = variant or "default"
         page.payload = payload
         result.append(page)
+
+    return result
+
+
+def _preferred_variant_for_four_photo_grid(
+    asset_ids: List[str], asset_lookup: Dict[str, Asset]
+) -> Optional[str]:
+    """
+    Use a simple orientation heuristic:
+    - If 3+ portraits: prefer default 2x2 (portraits sit better in balanced grid)
+    - If 3+ landscapes: prefer grid_4_simple (hero + three suits wides)
+    - Otherwise: no preference
+    """
+    orientations: List[str] = []
+    for aid in asset_ids:
+        asset = asset_lookup.get(aid)
+        width = getattr(asset.metadata, "width", None) if asset and asset.metadata else None
+        height = getattr(asset.metadata, "height", None) if asset and asset.metadata else None
+        if width and height:
+            orientations.append("portrait" if height > width else "landscape")
+    if not orientations:
+        return None
+    portraits = orientations.count("portrait")
+    landscapes = orientations.count("landscape")
+    if portraits >= 3:
+        return "default"
+    if landscapes >= 3:
+        return "grid_4_simple"
+    return None
+
+
+def _tune_four_photo_variants(
+    pages: List[Page],
+    asset_lookup: Dict[str, Asset],
+) -> List[Page]:
+    """
+    Iterate pages in order and choose a mix of 4-photo layouts:
+    - Aim for a rough balance of default vs grid_4_simple.
+    - Avoid more than 2 identical 4-photo layouts in a row when an alternative is available.
+    - Reset streaks when a new day starts (day_intro page).
+    - Honor orientation hints when available.
+    """
+    last_variant: Optional[str] = None
+    run_length = 0
+    count_default = 0
+    count_simple = 0
+    result: List[Page] = []
+
+    for page in pages:
+        if page.page_type == PageType.DAY_INTRO:
+            last_variant = None
+            run_length = 0
+            result.append(page)
+            continue
+
+        if page.page_type != PageType.PHOTO_GRID:
+            result.append(page)
+            continue
+
+        payload = page.payload or {}
+        asset_ids = payload.get("asset_ids") or []
+        variant = payload.get("layout_variant")
+        variant_is_defaultish = variant is None or variant in ("default", "grid_4_simple")
+
+        # Track streaks only for 4-photo grids
+        if len(asset_ids) != 4 or not variant_is_defaultish:
+            result.append(page)
+            continue
+
+        prefer = _preferred_variant_for_four_photo_grid(asset_ids, asset_lookup)
+
+        # Enforce streak cap
+        force_other = last_variant is not None and run_length >= 2
+
+        if force_other:
+            chosen = "grid_4_simple" if last_variant == "default" else "default"
+        else:
+            if prefer:
+                chosen = prefer
+                if last_variant == chosen and run_length >= 2:
+                    chosen = "grid_4_simple" if chosen == "default" else "default"
+            else:
+                # Balance counts when no preference
+                if count_default < count_simple:
+                    chosen = "default"
+                elif count_simple < count_default:
+                    chosen = "grid_4_simple"
+                else:
+                    chosen = "grid_4_simple" if last_variant == "default" else "default"
+
+        payload["layout_variant"] = chosen
+        page.payload = payload
+        result.append(page)
+
+        if chosen == "default":
+            count_default += 1
+        else:
+            count_simple += 1
+
+        if last_variant == chosen:
+            run_length += 1
+        else:
+            last_variant = chosen
+            run_length = 1
 
     return result
 
