@@ -27,6 +27,8 @@ def get_pdf_layout_variant(page: Any, photo_count: int) -> str:
     if not variant:
         return "default"
     variant_str = str(variant).strip()
+    if variant_str == "grid_3_hero" and photo_count >= 3:
+        return "grid_3_hero"
     if variant_str == "grid_4_simple" and photo_count == 4:
         return "grid_4_simple"
     return "default"
