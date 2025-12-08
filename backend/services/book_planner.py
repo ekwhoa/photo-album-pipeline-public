@@ -562,6 +562,38 @@ def _build_photo_pages_with_optional_spread(
     i = 0
     current_index = start_index
 
+    def _partition_batches(remaining: List[str]) -> List[List[str]]:
+        """
+        Partition remaining assets into batches using allowed sizes {6,4,3} with fallbacks to avoid 1-2 where possible.
+        """
+        sizes = [6, 4, 3, 2, 1]
+        penalty = {1: 10, 2: 8, 3: 0, 4: 0, 6: -1}
+        n = len(remaining)
+        dp: List[Optional[tuple]] = [None] * (n + 1)
+        dp[0] = (0, 0, 0, [])  # (penalty, pages, six_count, plan)
+        for k in range(1, n + 1):
+            best = None
+            for s in sizes:
+                if k - s < 0 or dp[k - s] is None:
+                    continue
+                base_pen, base_pages, base_six, base_plan = dp[k - s]
+                cand = (
+                    base_pen + penalty.get(s, 0),
+                    base_pages + 1,
+                    base_six + (1 if s == 6 else 0),
+                    base_plan + [s],
+                )
+                if best is None or cand < best:
+                    best = cand
+            dp[k] = best
+        plan_sizes = dp[n][3] if dp[n] else [len(remaining)]
+        batches: List[List[str]] = []
+        idx = 0
+        for sz in plan_sizes:
+            batches.append(remaining[idx : idx + sz])
+            idx += sz
+        return batches
+
     while i < len(asset_ids):
         current_side = "left" if current_index % 2 == 0 else "right"
         aid = asset_ids[i]
@@ -650,18 +682,12 @@ def _build_photo_pages_with_optional_spread(
             i += 1
             continue
 
-        # Normal grid page
-        batch: List[str] = []
-        while i < len(asset_ids) and len(batch) < photos_per_page:
-            if spread_hero_id and not spread_used and asset_ids[i] == spread_hero_id:
-                i += 1
+        remaining = asset_ids[i:]
+        batches = _partition_batches(remaining)
+        for batch in batches:
+            if not batch:
                 continue
-            batch.append(asset_ids[i])
-            i += 1
-
-        if batch:
             if len(batch) == 1:
-                # Single-photo chunk becomes a full-page hero
                 pages.append(
                     Page(
                         index=current_index,
@@ -685,6 +711,8 @@ def _build_photo_pages_with_optional_spread(
                     )
                 )
             current_index += 1
+        # consumed all remaining
+        i = len(asset_ids)
 
     return pages, current_index, spread_used
 
