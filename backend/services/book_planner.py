@@ -260,6 +260,7 @@ def plan_book(
         map_route_page.payload = payload
         all_interior_pages.append(map_route_page)
     all_interior_pages.extend(interior_pages)
+    all_interior_pages = _apply_daily_grid_hero_variants(all_interior_pages)
     all_interior_pages = _ensure_layout_variants(all_interior_pages)
 
     # Debug accounting
@@ -1137,6 +1138,45 @@ def _ensure_layout_variants(pages: List[Page]) -> List[Page]:
                 payload["layout_variant"] = "default"
                 page.payload = payload
     return pages
+
+
+def _apply_daily_grid_hero_variants(pages: List[Page]) -> List[Page]:
+    """
+    Apply per-day hero grid variants:
+    - 3-photo grids: grid_3_hero when unset/default.
+    - 4-photo grids: only the first grid after a day_intro gets grid_4_simple
+      when unset/default; subsequent 4-photo grids fall back to default.
+    Resets the per-day flag when encountering a day_intro.
+    """
+    result: List[Page] = []
+    used_grid4 = False
+    for page in pages:
+        if page.page_type == PageType.DAY_INTRO:
+            used_grid4 = False
+            result.append(page)
+            continue
+
+        if page.page_type != PageType.PHOTO_GRID:
+            result.append(page)
+            continue
+
+        payload = page.payload or {}
+        asset_ids = payload.get("asset_ids") or []
+        variant = payload.get("layout_variant")
+        variant_is_default = variant is None or variant == "default"
+
+        if len(asset_ids) == 3 and variant_is_default:
+            payload["layout_variant"] = "grid_3_hero"
+        elif len(asset_ids) == 4:
+            if not used_grid4 and variant_is_default:
+                payload["layout_variant"] = "grid_4_simple"
+                used_grid4 = True
+            elif variant_is_default:
+                payload["layout_variant"] = "default"
+        page.payload = payload
+        result.append(page)
+
+    return result
 
 
 # ============================================
