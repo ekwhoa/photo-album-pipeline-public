@@ -564,19 +564,23 @@ def _build_photo_pages_with_optional_spread(
 
     def _chunk_day_for_grids(remaining: List[str]) -> List[List[str]]:
         """
-        Chunk a day's photos using 4-up by default, introducing 6-up only to fix bad remainders.
+        Given the remaining photo IDs for a day (after any spread/hero handling),
+        chunk them into batches for photo grids.
 
-        Remainder rules (n = len(remaining)):
-          - n % 4 == 0: all 4-up
-          - n % 4 == 1 and n >= 9: last 12 become two 6-up pages
-          - n % 4 == 2 and n >= 6: last 10 become one 6-up + one 4-up
-          - n % 4 == 3: leave as 4/3 mixes
-
-        Order is preserved; at most two 6-up pages per day.
+        Heuristics:
+        - Prefer 4-up grids as the default.
+        - Avoid tiny 1- or 2-photo grids when possible.
+        - Use a single 6-up grid for exactly 6 photos.
+        - When there is a remainder of 2 with enough photos, convert the last 10
+          into one 6-up + one 4-up to avoid a lonely 2-up.
         """
         n = len(remaining)
         if n == 0:
             return []
+
+        # Special case: exactly six photos → one 6-up page.
+        if n == 6:
+            return [remaining]
 
         batches: List[List[str]] = []
 
@@ -584,12 +588,15 @@ def _build_photo_pages_with_optional_spread(
             return remaining[start_idx : start_idx + sz]
 
         remainder = n % 4
+
+        # Clean multiples of four → all 4-up grids.
         if remainder == 0:
             for idx in range(0, n, 4):
                 batches.append(take(4, idx))
             return batches
 
-        if remainder == 1 and n >= 9:
+        # Remainder 1 with enough photos: last 12 as 6 + 6.
+        if remainder == 1 and n >= 13:
             lead = n - 12
             for idx in range(0, lead, 4):
                 batches.append(take(4, idx))
@@ -597,7 +604,8 @@ def _build_photo_pages_with_optional_spread(
             batches.append(take(6, lead + 6))
             return batches
 
-        if remainder == 2 and n >= 6:
+        # Remainder 2 with enough photos: last 10 as 6 + 4.
+        if remainder == 2 and n >= 10:
             lead = n - 10
             for idx in range(0, lead, 4):
                 batches.append(take(4, idx))
@@ -605,17 +613,21 @@ def _build_photo_pages_with_optional_spread(
             batches.append(take(4, lead + 6))
             return batches
 
+        # Fallback: walk forward and choose the best small batch for the tail.
         idx = 0
         while idx < n:
+            remaining_count = n - idx
             take_size = 4
-            if n - idx == 3:
+            if remaining_count == 3:
                 take_size = 3
-            elif n - idx == 2:
+            elif remaining_count == 2:
                 take_size = 2
-            elif n - idx == 1:
+            elif remaining_count == 1:
                 take_size = 1
+
             batches.append(take(take_size, idx))
             idx += take_size
+
         return batches
 
     while i < len(asset_ids):
