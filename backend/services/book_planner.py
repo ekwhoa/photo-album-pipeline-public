@@ -1291,7 +1291,7 @@ def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
     Insert blank pages to enforce layout parity:
     - Day intros should land on a right-hand page (interior index even).
     - Photo spread pairs (same hero) should start on a left-hand page (interior index odd).
-    Starts counting interior pages at the first day_intro.
+    Starts counting interior pages at the trip_summary page (treated as the first right-hand interior page).
     """
     result: List[Page] = []
     interior_started = False
@@ -1300,16 +1300,16 @@ def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
     while i < len(pages):
         page = pages[i]
 
-        # Wait for first day_intro to start parity enforcement
+        # Start parity enforcement at trip_summary; before that, just copy pages
         if not interior_started:
             result.append(page)
-            if page.page_type == PageType.DAY_INTRO:
+            if page.page_type == PageType.TRIP_SUMMARY:
                 interior_started = True
-                interior_idx = 0
-                # enforce day_intro on right
-                if interior_idx % 2 == 1:
-                    result.insert(-1, _make_blank_page())
-                    interior_idx += 1
+                # trip_summary consumes the first (right-hand) interior page
+                interior_idx = 1  # next page will be left
+            elif page.page_type == PageType.DAY_INTRO:
+                interior_started = True
+                interior_idx = 0  # day intro wants to be right (even)
             i += 1
             continue
 
