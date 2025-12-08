@@ -646,13 +646,46 @@ def _render_day_intro(
         justify-content: center;
         page-break-after: always;
     ">
-        <div class="page-content" style="text-align: center; display: flex; flex-direction: column; gap: 6px;">
+        <style>
+            .day-intro-center {{
+                text-align: center;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }}
+            .day-intro-photos {{
+                margin-top: 6px;
+                margin-bottom: 10px;
+            }}
+            .day-intro-tagline {{
+                margin-top: 6px;
+                margin-bottom: 6px;
+            }}
+            .day-intro-summary {{
+                margin-top: 4px;
+                margin-bottom: 6px;
+            }}
+            .day-intro-segments {{
+                list-style: disc;
+                list-style-position: outside;
+                margin: 8px auto 0;
+                padding: 0 18px;
+                text-align: left;
+                max-width: 80%;
+                font-size: 10pt;
+                color: {theme.secondary_color};
+            }}
+            .day-intro-segments li {{
+                margin: 2px 0;
+            }}
+        </style>
+        <div class="day-intro-center">
             <div style="font-size: 12pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
             <div style="font-size: 24pt; font-family: {theme.title_font_family}; color: {theme.primary_color};">{title}</div>
-            {f'<div style="font-size: 12pt; color: {theme.secondary_color};">{photos}</div>' if photos else ''}
-            {f'<div style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
-            {f'<div style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
-            {f'<ul style=\"list-style: disc; margin: 6px auto 0; padding: 0 18px; text-align: left; max-width: 80%; color: {theme.primary_color};\">' + ''.join([f'<li style=\"font-size: 10pt; margin: 2px 0;\">{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
+            {f'<div class=\"day-intro-photos\" style=\"font-size: 12pt; color: {theme.secondary_color};\">{photos}</div>' if photos else ''}
+            {f'<div class=\"day-intro-tagline\" style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
+            {f'<div class=\"day-intro-summary\" style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
+            {f'<ul class=\"day-intro-segments\">' + ''.join([f'<li>{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
         </div>
     </div>
     """
