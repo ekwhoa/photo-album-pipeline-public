@@ -79,10 +79,8 @@ export function PageDetailModal({
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assets.find((a) => a.id === heroId) : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
-  const spreadSlotRaw =
-    (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
-    (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
-  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? (page.index % 2 === 0 ? 'left' : 'right');
+  // Use layout index parity to decide spread side, matching backend/PDF rendering.
+  const spreadSlot: 'left' | 'right' = page.index % 2 === 0 ? 'left' : 'right';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">

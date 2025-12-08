@@ -55,10 +55,8 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   const heroId = page.asset_ids?.[0] || page.hero_asset_id || null;
   const heroAsset = heroId ? assetMap[heroId] : undefined;
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
-  const spreadSlotRaw =
-    (page as BookPage & { spread_slot?: 'left' | 'right'; spreadSlot?: 'left' | 'right' }).spread_slot ??
-    (page as BookPage & { spreadSlot?: 'left' | 'right' }).spreadSlot;
-  const spreadSlot: 'left' | 'right' = spreadSlotRaw ?? (page.index % 2 === 0 ? 'left' : 'right');
+  // For spreads, align with backend/PDF parity: first spread page is left, second is right.
+  const spreadSlot: 'left' | 'right' = page.index % 2 === 0 ? 'left' : 'right';
 
   return (
     <Card
