@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
+from services import map_route_renderer
 logger = logging.getLogger(__name__)
 
 
@@ -612,6 +613,9 @@ def _render_day_intro(
     theme: Theme,
     width_mm: float,
     height_mm: float,
+    media_root: str,
+    mode: str,
+    media_base_url: str | None,
 ) -> str:
     """Render a simple day intro page."""
     bg_color = layout.background_color or theme.background_color
@@ -651,6 +655,23 @@ def _render_day_intro(
             segment_lines.append(format_segment_line(idx + 1, seg))
         except Exception:
             continue
+
+    # Optional mini route image for this day if segments have polylines
+    mini_route_src = ""
+    segments = getattr(layout, "segments", None) or []
+    if layout.book_id and segments:
+        rel_path, abs_path = map_route_renderer.render_day_route_image(
+            layout.book_id,
+            segments,
+            width=800,
+            height=360,
+            filename_prefix=f"day_{layout.page_index}_route",
+        )
+        if rel_path or abs_path:
+            if mode == "pdf":
+                mini_route_src = abs_path or ""
+            else:
+                mini_route_src = _resolve_web_image_url(f"/static/{rel_path}" if rel_path else abs_path, media_base_url)
 
     return f"""
     <div class="page day-intro-page" style="
@@ -697,6 +718,17 @@ def _render_day_intro(
             .day-intro-segments li {{
                 margin: 2px 0;
             }}
+            .day-intro-mini-map-wrapper {{
+                margin-top: 10mm;
+                margin-bottom: 8mm;
+                text-align: center;
+            }}
+            .day-intro-mini-map {{
+                max-width: 100%;
+                max-height: 60mm;
+                border-radius: 4px;
+                display: inline-block;
+            }}
         </style>
         <div class="day-intro-center">
             <div style="font-size: 12pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
@@ -704,6 +736,7 @@ def _render_day_intro(
             {f'<div class=\"day-intro-photos\" style=\"font-size: 12pt; color: {theme.secondary_color};\">{photos}</div>' if photos else ''}
             {f'<div class=\"day-intro-tagline\" style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
             {f'<div class=\"day-intro-summary\" style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
+            {f'<div class=\"day-intro-mini-map-wrapper\"><img class=\"day-intro-mini-map\" src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
             {f'<ul class=\"day-intro-segments\">' + ''.join([f'<li>{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
         </div>
     </div>
@@ -850,7 +883,7 @@ def _render_page_html(
     if layout.page_type == PageType.PHOTO_GRID:
         return _render_photo_grid_from_elements(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.DAY_INTRO:
-        return _render_day_intro(layout, theme, width_mm, height_mm)
+        return _render_day_intro(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.PHOTO_SPREAD:
         return _render_photo_spread(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type in (PageType.PHOTO_FULL, PageType.FULL_PAGE_PHOTO) or getattr(layout, "page_type", None) == "full_page_photo":

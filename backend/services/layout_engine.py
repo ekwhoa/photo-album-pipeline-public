@@ -46,9 +46,15 @@ def compute_layout(page: Page, context: RenderContext) -> PageLayout:
     return layout_func(page, context)
 
 
-def compute_all_layouts(pages: List[Page], context: RenderContext) -> List[PageLayout]:
+def compute_all_layouts(pages: List[Page], context: RenderContext, book_id: str | None = None) -> List[PageLayout]:
     """Compute layouts for all pages in a book."""
-    return [compute_layout(page, context) for page in pages]
+    layouts: List[PageLayout] = []
+    for page in pages:
+        layout = compute_layout(page, context)
+        # Attach book_id for downstream consumers (optional)
+        layout.book_id = book_id
+        layouts.append(layout)
+    return layouts
 
 
 # ============================================
@@ -400,6 +406,7 @@ def layout_day_intro(page: Page, context: RenderContext) -> PageLayout:
         segments_total_distance_km=page.payload.get("segments_total_distance_km"),
         segments_total_duration_hours=page.payload.get("segments_total_duration_hours"),
         segments=page.payload.get("segments"),
+        book_id=page.payload.get("book_id"),
     )
 
 

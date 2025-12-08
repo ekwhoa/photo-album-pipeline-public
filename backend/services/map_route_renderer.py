@@ -8,7 +8,7 @@ import os
 import math
 from pathlib import Path
 from statistics import median
-from typing import List, Tuple
+from typing import List, Tuple, Sequence, Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -37,6 +37,39 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
     Returns:
         (relative_path, absolute_path). Empty strings if rendering fails or insufficient points.
         relative_path is relative to the static mount root (data/).
+    """
+    return _render_route_image(book_id, points, width=1600, height=1000, filename_prefix="route")
+
+
+def render_day_route_image(
+    book_id: str,
+    segments: Sequence[dict],
+    width: int = 800,
+    height: int = 400,
+    filename_prefix: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Render a smaller route image for a single day using only that day's segment polylines.
+    """
+    points: List[Tuple[float, float]] = []
+    for seg in segments or []:
+        poly = seg.get("polyline") or []
+        if len(poly) >= 2:
+            points.extend([(lat, lon) for lat, lon in poly])
+    if filename_prefix is None:
+        filename_prefix = "day_route"
+    return _render_route_image(book_id, points, width=width, height=height, filename_prefix=filename_prefix)
+
+
+def _render_route_image(
+    book_id: str,
+    points: Sequence[Tuple[float, float]],
+    width: int,
+    height: int,
+    filename_prefix: str = "route",
+) -> Tuple[str, str]:
+    """
+    Shared rendering logic for trip and day maps.
     """
     if len(points) < 2:
         return "", ""
@@ -93,8 +126,6 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
             f"span_lat={bbox['span_lat']:.4f} span_lon={bbox['span_lon']:.4f}"
         )
 
-        # Render schematic map with Pillow
-        width, height = 1600, 1000
         img = Image.new("RGB", (width, height), color="#f6f8fa")
         draw = ImageDraw.Draw(img)
         route_width = 6
@@ -192,7 +223,7 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         else:
             composed = background_img
 
-        filename = f"book_{book_id}_route.png"
+        filename = f"book_{book_id}_{filename_prefix}.png"
         output_path = MAP_OUTPUT_DIR / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
         final_img = composed.resize((width, height), resample=Image.LANCZOS)
