@@ -60,50 +60,100 @@ def format_segment_line(index: int, segment: Dict[str, Any]) -> str:
     return " • ".join(parts)
 
 
+def _pluralize(count: Optional[int], singular: str, plural: Optional[str] = None) -> str:
+    """Return a properly pluralized label."""
+    if count is None:
+        return singular
+    if count == 1:
+        return f"1 {singular}"
+    return f"{count} {plural or singular + 's'}"
+
+
+def _format_hours(hours: Optional[float]) -> str:
+    """Format hours with one decimal, hiding near-zero values."""
+    if hours is None:
+        return ""
+    if hours < 0.05:
+        return ""
+    return f"{hours:.1f} h"
+
+
+def _format_km(km: Optional[float]) -> str:
+    """Format distance in km with one decimal, hiding near-zero values."""
+    if km is None:
+        return ""
+    if km < 0.05:
+        return ""
+    return f"~{km:.1f} km"
+
+
 def build_day_intro_tagline(
     segment_count: Optional[int],
     total_hours: Optional[float],
     total_km: Optional[float],
 ) -> str:
     """
-    Mirror the frontend's day intro narrative line.
-    Example: "Big travel day  8.4 h out and about • ~1492.6 km traveled"
+    Generate a concise blurb for a day intro.
+
+    Categories:
+    - Big travel day: very large distance.
+    - Full-day exploring / Out and about: moderate movement or time.
+    - Chill day nearby: very low distance + duration.
+    - Easygoing day: fallback.
     """
     hours = total_hours or 0.0
     km = total_km or 0.0
     count = segment_count or 0
-    far = km >= 100
-    medium = 10 <= km < 100
-    long_day = hours >= 8
-    short_day = hours < 3
 
-    label = "Easygoing day"
-    if far:
-        label = "Big travel day"
-    elif long_day and medium:
-        label = "Full-day exploring"
-    elif short_day and km < 5:
-        label = "Chill day nearby"
-    elif long_day:
-        label = "Long day out"
-    elif medium:
-        label = "Out and about"
-
-    # If there's really no movement/segments, skip
-    if count <= 0 and hours <= 0 and km <= 0:
+    if count <= 0 and hours <= 0.05 and km <= 0.05:
         return ""
 
-    duration_label = f"{hours:.1f} h out and about"
-    distance_label = f"~{km:.1f} km traveled" if km > 0 else ""
-    parts = [label, duration_label]
-    if distance_label:
-        parts.append(distance_label)
+    far = km >= 400
+    exploring = (km >= 5 and km < 400) or hours >= 4
+    chill = km < 5 and hours < 3
+    long_day = hours >= 8
 
-    if len(parts) == 2:
-        return "  ".join(parts)
-    if len(parts) == 3:
-        return "  ".join(parts[:2]) + f" • {parts[2]}"
-    return ""
+    if far:
+        label = "Big travel day"
+    elif exploring and long_day:
+        label = "Full-day exploring"
+    elif exploring:
+        label = "Out and about"
+    elif chill:
+        label = "Chill day nearby"
+    else:
+        label = "Easygoing day"
+
+    parts: List[str] = [label]
+
+    hours_str = _format_hours(hours)
+    km_str = _format_km(km)
+
+    if label in ("Big travel day",):
+        if km_str:
+            parts.append(f"{km_str} traveled")
+        if hours_str:
+            parts.append(f"{hours_str} in transit")
+    elif label in ("Full-day exploring", "Out and about"):
+        if hours_str:
+            parts.append(f"{hours_str} out and about")
+        if km_str:
+            parts.append(f"{km_str} covered")
+    elif label == "Chill day nearby":
+        if hours_str or km_str:
+            detail = "short walks close to home"
+            if hours_str:
+                detail = f"{hours_str} of light wandering"
+            parts.append(detail)
+        else:
+            parts.append("low-key and close to home")
+    else:
+        if hours_str:
+            parts.append(f"{hours_str} out and about")
+        if km_str:
+            parts.append(f"{km_str} covered")
+
+    return " • ".join([p for p in parts if p])
 
 
 def render_book_to_pdf(
