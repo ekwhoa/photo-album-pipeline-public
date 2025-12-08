@@ -42,6 +42,15 @@ export type GridLayoutVariant =
   | 'grid_3up_hero'
   | 'grid_6_dense';
 
+export interface SegmentSummary {
+  index: number;
+  distance_km: number;
+  duration_hours: number;
+  start_label?: string | null;
+  end_label?: string | null;
+  polyline?: [number, number][];
+}
+
 // Segment debug types
 export interface SegmentDebugSegment {
   segment_index: number;
@@ -71,6 +80,29 @@ export interface PhotoGridPage {
   asset_ids: string[];
   layout?: string;
   layout_variant?: GridLayoutVariant | null;
+}
+
+export interface DayIntroPage {
+  page_type: 'day_intro';
+  day_index: number;
+  day_date?: string | null;
+  display_date?: string | null;
+  day_photo_count?: number;
+  segment_count?: number;
+  segments_total_distance_km?: number;
+  segments_total_duration_hours?: number;
+  segments?: SegmentSummary[];
+  [key: string]: any;
+}
+
+export interface MapRoutePage {
+  page_type: 'map_route';
+  gps_photo_count?: number;
+  distinct_locations?: number;
+  route_image_path?: string;
+  route_image_abs_path?: string;
+  segments?: SegmentSummary[];
+  [key: string]: any;
 }
 
 export const BOOK_SIZES = [

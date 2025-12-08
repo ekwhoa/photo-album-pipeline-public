@@ -37,6 +37,17 @@ export interface PagePreview {
   asset_ids?: string[];
   hero_asset_id?: string | null;
   layout_variant?: 'default' | 'grid_4_simple' | 'grid_2up' | 'grid_3up_hero' | 'grid_6_dense' | null;
+  segment_count?: number;
+  segments_total_distance_km?: number;
+  segments_total_duration_hours?: number;
+  segments?: {
+    index: number;
+    distance_km: number;
+    duration_hours: number;
+    start_label?: string | null;
+    end_label?: string | null;
+    polyline?: [number, number][];
+  }[];
 }
 
 export interface GenerateResult {

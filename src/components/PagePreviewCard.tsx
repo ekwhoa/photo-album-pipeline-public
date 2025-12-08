@@ -4,6 +4,7 @@ import { BookOpen, FileText, Grid3X3, Image, MapPin, Star, Calendar } from 'luci
 import type { Asset } from '@/lib/api';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
 import type { BookPage, GridLayoutVariant } from '@/types/book';
+import { formatDaySegmentSummary } from '@/lib/segmentFormat';
 
 interface PagePreviewCardProps {
   page: BookPage;
@@ -77,15 +78,27 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
               {icon}
               <span className="font-medium text-foreground">{label}</span>
               <p className="line-clamp-3 text-muted-foreground">{page.summary}</p>
-              {page.page_type === 'day_intro' && segmentSummary && segmentSummary.segmentsCount > 0 && (
-                <p className="text-[11px] text-muted-foreground">
-                  {formatSegmentSummary(segmentSummary)}
-                </p>
-              )}
-              {page.page_type === 'day_intro' && dayNarrativeSummary && (
-                <p className="text-[11px] text-muted-foreground">
-                  {dayNarrativeSummary.label}
-                </p>
+              {page.page_type === 'day_intro' && (
+                <>
+                  {formatDaySegmentSummary({
+                    segment_count: page.segment_count,
+                    total_hours: page.segments_total_duration_hours,
+                    total_km: page.segments_total_distance_km,
+                  }) && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {formatDaySegmentSummary({
+                        segment_count: page.segment_count,
+                        total_hours: page.segments_total_duration_hours,
+                        total_km: page.segments_total_distance_km,
+                      })}
+                    </p>
+                  )}
+                  {dayNarrativeSummary && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {dayNarrativeSummary.label}
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}

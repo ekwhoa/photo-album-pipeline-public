@@ -17,6 +17,7 @@ import type { Asset } from '@/lib/api';
 import type { BookPage, GridLayoutVariant } from '@/types/book';
 import { getAssetUrl, getThumbnailUrl } from '@/lib/api';
 import clsx from 'clsx';
+import { formatDaySegmentSummary, formatSegmentBlurb } from '@/lib/segmentFormat';
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   front_cover: 'Front Cover',
@@ -108,6 +109,26 @@ export function PageDetailModal({
               <p className="text-muted-foreground text-sm max-w-2xl mx-auto">
                 {page.summary}
               </p>
+              {formatDaySegmentSummary({
+                segment_count: page.segment_count,
+                total_hours: page.segments_total_duration_hours,
+                total_km: page.segments_total_distance_km,
+              }) && (
+                <p className="text-sm text-muted-foreground">
+                  {formatDaySegmentSummary({
+                    segment_count: page.segment_count,
+                    total_hours: page.segments_total_duration_hours,
+                    total_km: page.segments_total_distance_km,
+                  })}
+                </p>
+              )}
+              {page.segments && page.segments.length > 0 && (
+                <ul className="text-sm text-muted-foreground space-y-1 max-w-2xl mx-auto text-left">
+                  {page.segments.map((seg, idx) => (
+                    <li key={idx}>{formatSegmentBlurb(seg, idx + 1)}</li>
+                  ))}
+                </ul>
+              )}
               {narrativeSummary && (
                 <p className="text-sm text-slate-700">
                   {narrativeSummary.label}
