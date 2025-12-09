@@ -54,6 +54,18 @@ DEBUG_MAP_RENDERING = True
 # Ensure directories exist
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Route / map styling
+ROUTE_OUTLINE_COLOR = (0, 0, 0, 180)
+ROUTE_OUTLINE_EXTRA_WIDTH = 2
+ROUTE_SHADOW_COLOR = (0, 0, 0, 140)
+ROUTE_GLOW_COLOR = (255, 255, 255, 220)
+ROUTE_MARKER_FILL = (255, 255, 255, 255)
+ROUTE_MARKER_OUTLINE = (0, 0, 0, 220)
+ROUTE_MARKER_RADIUS = 5
+ROUTE_CANVAS_PADDING_PX = 24
+LEGEND_MARGIN_PX = 16
+TILE_DARKEN_OVERLAY = (0, 0, 0, 80)
+
 # TODO(map-v2): explore further smoothing/anti-aliasing for extreme zoom levels,
 # or switching to an SVG/vector-based route renderer if we ever need ultra-high DPI.
 def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[str, str]:
@@ -287,6 +299,41 @@ def _draw_tile_background(
     return any_tile
 
 
+def _apply_tile_overlay(bg: Image.Image) -> None:
+    """Slightly darken the tile background so the route stands out."""
+    base = bg
+    if base.mode != "RGBA":
+        base = base.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, TILE_DARKEN_OVERLAY)
+    darkened = Image.alpha_composite(base, overlay)
+    bg.paste(darkened)
+
+
+def _compute_route_width(size: Tuple[int, int]) -> int:
+    """Derive a base stroke width relative to canvas size."""
+    w, h = size
+    base = min(w, h) // 60
+    return max(4, min(base, 14))
+
+
+def _draw_route_markers(
+    draw: ImageDraw.ImageDraw,
+    points: Sequence[Tuple[float, float]],
+    base_width: int,
+    start_outline: Tuple[int, int, int, int],
+    end_outline: Tuple[int, int, int, int],
+) -> None:
+    """Draw neutral start/end markers so they work on tiles or grid."""
+    if not points:
+        return
+    start = points[0]
+    end = points[-1]
+    r = max(ROUTE_MARKER_RADIUS, base_width // 2)
+    for (x, y), outline in ((start, start_outline), (end, end_outline)):
+        bbox = (x - r, y - r, x + r, y + r)
+        draw.ellipse(bbox, fill=ROUTE_MARKER_FILL, outline=outline, width=1)
+
+
 def _render_route_image(
     book_id: str,
     points: Sequence[Tuple[float, float]],
@@ -367,7 +414,7 @@ def _render_route_image(
         bg_color = "#050910"
         grid_color = (40, 48, 58, 35)
         grid_spacing = 100
-        frame_color = "#0f1724"
+        frame_color = "#1a2433"
         frame_width = 3
         halo_color = (46, 139, 192, 70)
         halo_width = 16
@@ -375,7 +422,7 @@ def _render_route_image(
         start_color = (64, 224, 208, 255)  # turquoise
         end_color = (244, 114, 182, 255)  # coral/pink
         marker_outline = (255, 255, 255, 60)
-        margin_px = 90
+        margin_px = max(90, ROUTE_CANVAS_PADDING_PX)
         coords = _map_points_to_canvas(simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9)
         smoothed_coords = _smooth_polyline(
             coords,
@@ -398,6 +445,8 @@ def _render_route_image(
             print(f"[MAP] Tile background failed, falling back to grid: {exc}")
             tiles_ok = False
 
+        if tiles_ok:
+            _apply_tile_overlay(background_img)
         if not tiles_ok:
             background_img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
             bg_draw = ImageDraw.Draw(background_img, "RGBA")
@@ -434,9 +483,22 @@ def _render_route_image(
 
             route_layer = Image.new("RGBA", (draw_width, draw_height), (0, 0, 0, 0))
             route_draw = ImageDraw.Draw(route_layer, "RGBA")
+            base_width = _compute_route_width((draw_width, draw_height))
 
-            route_draw.line(smoothed_scaled, fill=halo_color, width=int(halo_width * UPSCALE_FACTOR), joint="curve")
-            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(route_width * UPSCALE_FACTOR))
+            # Shadow -> glow -> gradient
+            route_draw.line(
+                smoothed_scaled,
+                fill=ROUTE_SHADOW_COLOR,
+                width=int(base_width + 4),
+                joint="curve",
+            )
+            route_draw.line(
+                smoothed_scaled,
+                fill=ROUTE_GLOW_COLOR,
+                width=int(base_width + 2),
+                joint="curve",
+            )
+            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(base_width))
 
             blurred_route = route_layer.filter(ImageFilter.GaussianBlur(radius=1.0 * UPSCALE_FACTOR))
             blended_route = Image.alpha_composite(blurred_route, route_layer)
@@ -444,12 +506,11 @@ def _render_route_image(
             composed = Image.alpha_composite(background_img, blended_route)
 
             overlay_draw = ImageDraw.Draw(composed, "RGBA")
-            _draw_marker(overlay_draw, coords_scaled[0], radius=int(10 * UPSCALE_FACTOR), fill="#3cb371", outline=marker_outline)
-            _draw_marker(overlay_draw, coords_scaled[-1], radius=int(10 * UPSCALE_FACTOR), fill="#e63946", outline=marker_outline)
+            _draw_route_markers(overlay_draw, coords_scaled, base_width, start_color, end_color)
 
             _draw_legend(overlay_draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
 
-            frame_margin = int(8 * UPSCALE_FACTOR)
+            frame_margin = int(6 * UPSCALE_FACTOR)
             frame_bbox = (
                 frame_margin,
                 frame_margin,
@@ -702,7 +763,7 @@ def _draw_legend(
     scale: float = UPSCALE_FACTOR,
 ) -> None:
     """Draw a small legend in the top-right corner."""
-    padding = int(20 * scale)
+    padding = int(LEGEND_MARGIN_PX * scale)
     line_len = int(70 * scale)
     line_gap = int(18 * scale)
     radius = int(5 * scale)
@@ -720,14 +781,14 @@ def _draw_legend(
     # Start
     start_line = [(x0, y0), (x0 + line_len, y0)]
     draw.line(start_line, fill=start_color, width=line_width)
-    _draw_marker(draw, start_line[0], radius=radius, fill="#3cb371", outline=outline_color)
+    _draw_marker(draw, start_line[0], radius=radius, fill=ROUTE_MARKER_FILL, outline=start_color)
     draw.text((x0 + line_len + text_offset, y0 - text_y_offset), "Start", fill="#d9e2ec", font=font)
 
     # End
     y1 = y0 + line_gap
     end_line = [(x0, y1), (x0 + line_len, y1)]
     draw.line(end_line, fill=end_color, width=line_width)
-    _draw_marker(draw, end_line[1], radius=radius, fill="#e63946", outline=outline_color)
+    _draw_marker(draw, end_line[1], radius=radius, fill=ROUTE_MARKER_FILL, outline=end_color)
     draw.text((x0 + line_len + text_offset, y1 - text_y_offset), "End", fill="#d9e2ec", font=font)
 
 
