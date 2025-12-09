@@ -6,15 +6,37 @@ Focuses on the dominant trip cluster and exaggerates skinny routes.
 """
 import os
 import math
+import threading
+import time
+from functools import lru_cache
 from pathlib import Path
 from statistics import median
-from typing import List, Tuple, Sequence, Optional
+from typing import List, Tuple, Sequence, Optional, Any
 
+import requests
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 UPSCALE_FACTOR = 4
+
+# Tile configuration
+MAP_TILES_ENABLED = os.getenv("MAP_TILES_ENABLED", "0") in ("1", "true", "TRUE")
+MAP_TILE_URL_TEMPLATE = os.getenv("MAP_TILE_URL_TEMPLATE", "")
+MAP_TILE_USER_AGENT = os.getenv(
+    "MAP_TILE_USER_AGENT",
+    os.getenv("NOMINATIM_USER_AGENT", "photo-album-pipeline/1.0 (tile-fetch)"),
+)
+MAP_TILE_REFERER = os.getenv("MAP_TILE_REFERER")
+MAP_TILE_TIMEOUT = float(os.getenv("MAP_TILE_TIMEOUT", "3"))
+MAP_RENDER_TIMEOUT = float(os.getenv("MAP_RENDER_TIMEOUT", "25"))
+MAP_TILE_MIN_INTERVAL_SEC = float(os.getenv("MAP_TILE_MIN_INTERVAL_SEC", "1.0"))
+MAP_TILE_HEADERS = {"User-Agent": MAP_TILE_USER_AGENT}
+if MAP_TILE_REFERER:
+    MAP_TILE_HEADERS["Referer"] = MAP_TILE_REFERER
+_TILE_SESSION = requests.Session()
+_TILE_LOCK = threading.Lock()
+_LAST_TILE_TS = 0.0
 
 # Directories
 DATA_DIR = BASE_DIR / "data"
@@ -67,6 +89,118 @@ def render_day_route_map(book_id: str, segments: Sequence[dict]) -> Tuple[str, s
     Returns (relative_path, absolute_path).
     """
     return render_day_route_image(book_id, segments, width=900, height=300, filename_prefix="day_route")
+
+
+def _fetch_tile_http(z: int, x: int, y: int) -> Optional[Image.Image]:
+    """
+    Fetch a single tile via HTTP with rate limiting.
+    Returns a PIL Image or None on error.
+    """
+    global _LAST_TILE_TS
+
+    if not MAP_TILES_ENABLED or not MAP_TILE_URL_TEMPLATE:
+        return None
+
+    url = MAP_TILE_URL_TEMPLATE.format(z=z, x=x, y=y)
+
+    with _TILE_LOCK:
+        now = time.time()
+        elapsed = now - _LAST_TILE_TS
+        if elapsed < MAP_TILE_MIN_INTERVAL_SEC:
+            time.sleep(MAP_TILE_MIN_INTERVAL_SEC - elapsed)
+        _LAST_TILE_TS = time.time()
+        try:
+            resp = _TILE_SESSION.get(
+                url, headers=MAP_TILE_HEADERS, timeout=MAP_TILE_TIMEOUT
+            )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"[MAP] Tile fetch failed for {url}: {exc}")
+            return None
+
+    try:
+        from io import BytesIO
+
+        return Image.open(BytesIO(resp.content)).convert("RGB")
+    except Exception as exc:
+        print(f"[MAP] Tile decode failed for {url}: {exc}")
+        return None
+
+
+@lru_cache(maxsize=512)
+def _fetch_tile_cached(z: int, x: int, y: int) -> Optional[Image.Image]:
+    """Cached tile fetch; wraps the throttled HTTP helper."""
+    return _fetch_tile_http(z, x, y)
+
+
+def _latlon_to_tile_xy(lat: float, lon: float, zoom: int) -> Tuple[float, float]:
+    """Convert lat/lon to fractional Web Mercator tile coords."""
+    lat_rad = math.radians(lat)
+    n = 2.0 ** zoom
+    x = (lon + 180.0) / 360.0 * n
+    y = (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n
+    return x, y
+
+
+def _draw_tile_background(
+    img: Image.Image,
+    bbox: dict[str, float],
+) -> bool:
+    """
+    Attempt to draw a tile background behind the route.
+    Returns True if tiles were drawn, False to fall back.
+    """
+    if not MAP_TILES_ENABLED or not MAP_TILE_URL_TEMPLATE:
+        return False
+
+    lat_min = bbox.get("min_lat")
+    lat_max = bbox.get("max_lat")
+    lon_min = bbox.get("min_lon")
+    lon_max = bbox.get("max_lon")
+    if None in (lat_min, lat_max, lon_min, lon_max):
+        return False
+
+    lat_span = max(1e-6, abs(lat_max - lat_min))
+    lon_span = max(1e-6, abs(lon_max - lon_min))
+    approx_span = max(lat_span, lon_span)
+
+    if approx_span > 10:
+        zoom = 7
+    elif approx_span > 2:
+        zoom = 9
+    elif approx_span > 0.5:
+        zoom = 11
+    else:
+        zoom = 13
+
+    x1f, y1f = _latlon_to_tile_xy(lat_max, lon_min, zoom)
+    x2f, y2f = _latlon_to_tile_xy(lat_min, lon_max, zoom)
+    x_min, x_max = int(math.floor(min(x1f, x2f))), int(math.floor(max(x1f, x2f)))
+    y_min, y_max = int(math.floor(min(y1f, y2f))), int(math.floor(max(y1f, y2f)))
+
+    tile_size = 256
+    span_px_x = (x_max - x_min + 1) * tile_size
+    span_px_y = (y_max - y_min + 1) * tile_size
+    scale = min(img.width / span_px_x, img.height / span_px_y)
+    if scale <= 0:
+        return False
+    scaled_tile_size = max(1, int(tile_size * scale))
+    offset_x = int((img.width - span_px_x * scale) / 2)
+    offset_y = int((img.height - span_px_y * scale) / 2)
+
+    any_tile = False
+    for ty in range(y_min, y_max + 1):
+        for tx in range(x_min, x_max + 1):
+            tile = _fetch_tile_cached(zoom, tx, ty)
+            if tile is None:
+                continue
+            any_tile = True
+            tile_resized = tile.resize((scaled_tile_size, scaled_tile_size), Image.BICUBIC)
+            px = offset_x + int((tx - x_min) * scaled_tile_size)
+            py = offset_y + int((ty - y_min) * scaled_tile_size)
+            img.paste(tile_resized, (px, py))
+
+    return any_tile
 
 
 def _render_route_image(
@@ -169,16 +303,27 @@ def _render_route_image(
         coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
         smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
 
-        background_img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
+        # First try tiles on a transparent base; fall back to the legacy grid if tiles fail.
+        background_img = Image.new("RGBA", (draw_width, draw_height), (0, 0, 0, 0))
         bg_draw = ImageDraw.Draw(background_img, "RGBA")
 
-        # Subtle grid texture
-        grid_step = int(grid_spacing * UPSCALE_FACTOR)
-        grid_line_width = max(1, int(1 * UPSCALE_FACTOR / 2))
-        for x in range(0, draw_width + 1, grid_step):
-            bg_draw.line([(x, 0), (x, draw_height)], fill=grid_color, width=grid_line_width)
-        for y in range(0, draw_height + 1, grid_step):
-            bg_draw.line([(0, y), (draw_width, y)], fill=grid_color, width=grid_line_width)
+        tiles_ok = False
+        try:
+            tiles_ok = _draw_tile_background(background_img, bbox)
+        except Exception as exc:
+            print(f"[MAP] Tile background failed, falling back to grid: {exc}")
+            tiles_ok = False
+
+        if not tiles_ok:
+            background_img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
+            bg_draw = ImageDraw.Draw(background_img, "RGBA")
+            # Subtle grid texture
+            grid_step = int(grid_spacing * UPSCALE_FACTOR)
+            grid_line_width = max(1, int(1 * UPSCALE_FACTOR / 2))
+            for x in range(0, draw_width + 1, grid_step):
+                bg_draw.line([(x, 0), (x, draw_height)], fill=grid_color, width=grid_line_width)
+            for y in range(0, draw_height + 1, grid_step):
+                bg_draw.line([(0, y), (draw_width, y)], fill=grid_color, width=grid_line_width)
 
         if coords and DEBUG_MAP_RENDERING:
             xs, ys = zip(*coords)
@@ -194,7 +339,7 @@ def _render_route_image(
             )
 
         if len(coords) >= 2:
-            if DEBUG_MAP_RENDERING:
+            if DEBUG_MAP_RENDERING and not tiles_ok:
                 safe_box = (
                     margin_px * UPSCALE_FACTOR,
                     margin_px * UPSCALE_FACTOR,
