@@ -17,6 +17,9 @@ from services.blurb_engine import (
     build_day_intro_tagline,
 )
 from services.geocoding import compute_centroid, reverse_geocode_label
+from services.itinerary import build_book_itinerary
+from services.manifest import build_manifest
+from services.timeline import build_days_and_events
 logger = logging.getLogger(__name__)
 
 
@@ -318,7 +321,26 @@ def _generate_book_html(
             media_base_url,
         )
         pages_html.append(page_html)
-    
+
+    # Optional itinerary page appended after all pages
+    try:
+        asset_list = list(assets.values())
+        manifest = build_manifest(book.id, asset_list)
+        days = build_days_and_events(manifest)
+        itinerary_days = build_book_itinerary(book, days, asset_list)
+    except Exception:
+        itinerary_days = []
+    if itinerary_days:
+        pages_html.append(
+            _render_itinerary_page(
+                itinerary_days,
+                theme,
+                width_mm,
+                height_mm,
+                page_index=len(pages_html),
+            )
+        )
+
     extra_styles = ""
     if mode == "web":
         extra_styles = """
@@ -358,7 +380,144 @@ def _generate_book_html(
     {''.join(pages_html)}
 </body>
 </html>
-"""
+    """
+
+
+def _render_itinerary_page(
+    itinerary_days: List[Any],
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+    page_index: int,
+) -> str:
+    """Render itinerary as a normal page with the standard wrapper."""
+    if not itinerary_days:
+        return ""
+
+    def fmt_date(date_iso: str) -> str:
+        try:
+            from datetime import datetime
+
+            dt = datetime.fromisoformat(date_iso)
+            return dt.strftime("%B %d, %Y")
+        except Exception:
+            return date_iso
+
+    def fmt_distance(km: Optional[float]) -> str:
+        if km is None or km <= 0:
+            return ""
+        return f"~{km:.1f} km"
+
+    def fmt_hours(hours: Optional[float]) -> str:
+        if hours is None or hours <= 0:
+            return ""
+        return f"{hours:.1f} h"
+
+    day_blocks: List[str] = []
+    for day in itinerary_days:
+        segments_count = len(getattr(day, "stops", []) or [])
+        distance_txt = fmt_distance(getattr(day, "segments_total_distance_km", None))
+        hours_txt = fmt_hours(getattr(day, "segments_total_duration_hours", None))
+        stats_parts = [
+            f"{getattr(day, 'photos_count', 0)} photos",
+            f"{segments_count} segments",
+        ]
+        if distance_txt:
+            stats_parts.append(distance_txt)
+        if hours_txt:
+            stats_parts.append(hours_txt)
+        stats_line = " • ".join(stats_parts)
+
+        locations_html = ""
+        locations = getattr(day, "locations", None) or []
+        if locations:
+            loc_lines = []
+            for loc in locations:
+                label = getattr(loc, "location_short", None) or getattr(
+                    loc, "location_full", None
+                )
+                if not label:
+                    continue
+                loc_lines.append(
+                    f'<div class="itinerary-location-line">{label}</div>'
+                )
+            if loc_lines:
+                locations_html = (
+                    f'<div class="itinerary-day-locations">{"".join(loc_lines)}</div>'
+                )
+
+        day_blocks.append(
+            f"""
+        <div class="itinerary-day">
+            <div class="itinerary-day-header">
+                <div class="itinerary-day-title">Day {getattr(day, 'day_index', '')} — {fmt_date(getattr(day, 'date_iso', '') or '')}</div>
+                <div class="itinerary-day-stats">{stats_line}</div>
+            </div>
+            {locations_html}
+        </div>
+        """
+        )
+
+    return f"""
+    <div class="page itinerary-page" data-page-index="{page_index}" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {theme.background_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+        page-break-after: always;
+    ">
+        <style>
+            .itinerary-section {{
+                padding: 2.5rem 2.75rem;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }}
+            .itinerary-header h1 {{
+                font-size: 1.4rem;
+                letter-spacing: 0.04em;
+                margin: 0 0 0.25rem 0;
+            }}
+            .itinerary-subtitle {{
+                font-size: 0.75rem;
+                color: #777;
+                margin: 0 0 1.25rem 0;
+            }}
+            .itinerary-day {{
+                padding: 0.75rem 0;
+                border-top: 1px solid #eee;
+            }}
+            .itinerary-day-header {{
+                display: flex;
+                justify-content: space-between;
+                font-size: 0.8rem;
+                margin-bottom: 0.25rem;
+            }}
+            .itinerary-day-title {{
+                font-weight: 500;
+            }}
+            .itinerary-day-stats {{
+                color: #555;
+                white-space: nowrap;
+                font-size: 0.75rem;
+            }}
+            .itinerary-day-locations {{
+                font-size: 0.75rem;
+                color: #555;
+            }}
+            .itinerary-location-line + .itinerary-location-line {{
+                margin-top: 0.1rem;
+            }}
+        </style>
+        <section class="itinerary-section">
+            <div class="itinerary-header">
+                <h1>Itinerary (beta)</h1>
+                <p class="itinerary-subtitle">Simple day-by-day stops derived from segments.</p>
+            </div>
+            {''.join(day_blocks)}
+        </section>
+    </div>
+    """
 
 
 def _render_map_route_card(
