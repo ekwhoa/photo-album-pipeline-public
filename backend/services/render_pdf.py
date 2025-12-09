@@ -7,7 +7,7 @@ Uses HTML/CSS rendering via WeasyPrint for flexibility.
 import os
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Iterable
 from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
 from services import map_route_renderer
 from services.blurb_engine import (
@@ -16,6 +16,7 @@ from services.blurb_engine import (
     build_trip_summary_blurb,
     build_day_intro_tagline,
 )
+from services.geocoding import compute_centroid, reverse_geocode_label
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +67,29 @@ def format_segment_line(index: int, segment: Dict[str, Any]) -> str:
     if isinstance(km, (int, float)) and km > 0:
         parts.append(f"{km:.1f} km")
     return " • ".join(parts)
+
+
+def _points_from_segments(segments: Iterable[Dict[str, Any]]) -> List[tuple[float, float]]:
+    """Flatten segment polylines into a list of (lat, lon) tuples."""
+    points: List[tuple[float, float]] = []
+    for seg in segments or []:
+        polyline = seg.get("polyline") or []
+        try:
+            for lat, lon in polyline:
+                points.append((float(lat), float(lon)))
+        except Exception:
+            continue
+    return points
+
+
+def _location_label_for_segments(segments: Iterable[Dict[str, Any]]) -> Optional[str]:
+    """Compute a short location label for a collection of segments."""
+    points = _points_from_segments(segments)
+    centroid = compute_centroid(points)
+    if not centroid:
+        return None
+    place = reverse_geocode_label(*centroid)
+    return place.short_label if place else None
 
 
 def render_book_to_pdf(
@@ -535,6 +559,7 @@ def _render_trip_summary_card(
             num_locations=num_locations,
         )
         blurb = build_trip_summary_blurb(ctx)
+    location_label = _location_label_for_segments(getattr(layout, "segments", None) or [])
 
     return f"""
     <div class="page trip-summary-page" style="
@@ -595,11 +620,17 @@ def _render_trip_summary_card(
                 color: {theme.primary_color};
                 margin: 2mm 0 0 0;
             }}
+            .trip-summary-location {{
+                font-size: 10pt;
+                color: {theme.secondary_color};
+                margin: 0;
+            }}
         </style>
         <div class="trip-summary-card">
             <h1 class="trip-summary-title">{title}</h1>
             <p class="trip-summary-subtitle">{subtitle}</p>
             {f'<p class=\"trip-summary-blurb\">{blurb}</p>' if blurb else ''}
+            {f'<p class=\"trip-summary-location\">{location_label}</p>' if location_label else ''}
             {f'<p class=\"trip-summary-meta\">{stats_line}</p>' if stats_line else ''}
         </div>
     </div>
@@ -654,6 +685,7 @@ def _render_day_intro(
             segment_lines.append(format_segment_line(idx + 1, seg))
         except Exception:
             continue
+    location_label = _location_label_for_segments(getattr(layout, "segments", None) or [])
 
     # Optional mini route image for this day if segments have polylines
     mini_route_src = ""
@@ -700,6 +732,12 @@ def _render_day_intro(
                 margin-top: 6px;
                 margin-bottom: 6px;
             }}
+            .day-intro-location {{
+                margin-top: 4px;
+                margin-bottom: 4px;
+                font-size: 10pt;
+                color: {theme.secondary_color};
+            }}
             .day-intro-summary {{
                 margin-top: 4px;
                 margin-bottom: 6px;
@@ -734,6 +772,7 @@ def _render_day_intro(
             <div style="font-size: 24pt; font-family: {theme.title_font_family}; color: {theme.primary_color};">{title}</div>
             {f'<div class=\"day-intro-photos\" style=\"font-size: 12pt; color: {theme.secondary_color};\">{photos}</div>' if photos else ''}
             {f'<div class=\"day-intro-tagline\" style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
+            {f'<div class=\"day-intro-location\">{location_label}</div>' if location_label else ''}
             {f'<div class=\"day-intro-summary\" style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
             {f'<div class=\"day-intro-mini-map\"><img src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
             {f'<ul class=\"day-intro-segments\">' + ''.join([f'<li>{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
