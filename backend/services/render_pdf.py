@@ -413,6 +413,13 @@ def _render_itinerary_page(
             return ""
         return f"{hours:.1f} h"
 
+    def label_for_stop_kind(kind: Optional[str]) -> str:
+        if kind == "travel":
+            return "Travel segment"
+        if kind == "local":
+            return "Local exploring"
+        return "Segment"
+
     day_blocks: List[str] = []
     for day in itinerary_days:
         segments_count = len(getattr(day, "stops", []) or [])
@@ -446,6 +453,26 @@ def _render_itinerary_page(
                     f'<div class="itinerary-day-locations">{"".join(loc_lines)}</div>'
                 )
 
+        stops_html = ""
+        stops = getattr(day, "stops", None) or []
+        if stops:
+            rows: List[str] = []
+            for stop in stops:
+                kind_label = label_for_stop_kind(getattr(stop, "kind", None))
+                stop_parts: List[str] = []
+                dur = fmt_hours(getattr(stop, "duration_hours", None))
+                dist = fmt_distance(getattr(stop, "distance_km", None))
+                if dur:
+                    stop_parts.append(dur)
+                if dist:
+                    stop_parts.append(dist)
+                metrics = f" • {' • '.join(stop_parts)}" if stop_parts else ""
+                rows.append(
+                    f'<div class="itinerary-stop-row"><span class="itinerary-stop-kind">{kind_label}</span><span class="itinerary-stop-metrics">{metrics}</span></div>'
+                )
+            if rows:
+                stops_html = f'<div class="itinerary-day-stops">{"".join(rows)}</div>'
+
         day_blocks.append(
             f"""
         <div class="itinerary-day">
@@ -454,6 +481,7 @@ def _render_itinerary_page(
                 <div class="itinerary-day-stats">{stats_line}</div>
             </div>
             {locations_html}
+            {stops_html}
         </div>
         """
         )
@@ -507,6 +535,20 @@ def _render_itinerary_page(
             }}
             .itinerary-location-line + .itinerary-location-line {{
                 margin-top: 0.1rem;
+            }}
+            .itinerary-day-stops {{
+                margin-top: 0.15rem;
+                font-size: 0.7rem;
+                color: #555;
+            }}
+            .itinerary-stop-row + .itinerary-stop-row {{
+                margin-top: 0.05rem;
+            }}
+            .itinerary-stop-kind {{
+                font-weight: 500;
+            }}
+            .itinerary-stop-metrics {{
+                margin-left: 0.25rem;
             }}
         </style>
         <section class="itinerary-section">

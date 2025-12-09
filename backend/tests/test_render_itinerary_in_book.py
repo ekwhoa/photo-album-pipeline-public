@@ -48,7 +48,20 @@ def test_itinerary_section_appended(mock_itinerary):
             self.segments_total_distance_km = 12.3
             self.segments_total_duration_hours = 3.4
             self.locations = [MockLoc("Chicago, Illinois")]
-            self.stops = []
+            self.stops = [
+                type(
+                    "Stop",
+                    (),
+                    {
+                        "segment_index": 1,
+                        "distance_km": 5.6,
+                        "duration_hours": 1.2,
+                        "location_short": "Chicago, Illinois",
+                        "location_full": "Chicago, Illinois",
+                        "kind": "travel",
+                    },
+                )()
+            ]
 
     mock_itinerary.return_value = [MockDay()]
 
@@ -63,3 +76,4 @@ def test_itinerary_section_appended(mock_itinerary):
     assert "itinerary (beta)" in html.lower()
     assert "Day 1" in html
     assert "Chicago, Illinois" in html
+    assert "Travel segment" in html

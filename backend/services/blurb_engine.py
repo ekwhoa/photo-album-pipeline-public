@@ -65,6 +65,7 @@ def build_day_intro_tagline(ctx: DayIntroContext) -> Optional[str]:
     travel_segments = ctx.travel_segments_count or 0
     local_segments = ctx.local_segments_count or 0
     is_travel_heavy = travel_segments > 0 and travel_segments >= local_segments and distance > 100
+    is_local_heavy = local_segments > 0 and travel_segments == 0
 
     # If we truly have no movement data and no photos, bail out
     if segment_count <= 0 and distance < 0.1 and photos <= 0:
@@ -79,6 +80,9 @@ def build_day_intro_tagline(ctx: DayIntroContext) -> Optional[str]:
 
     if is_travel_heavy:
         return f"Travel day with {travel_segments} segment(s) covering about {rounded_km} km"
+
+    if is_local_heavy and distance < 50:
+        return f"Exploring nearby spots with about {photos} photos"
 
     if distance >= 15:
         base = "Covering some ground"
