@@ -64,7 +64,7 @@ ROUTE_MARKER_OUTLINE = (0, 0, 0, 220)
 ROUTE_MARKER_RADIUS = 5
 ROUTE_CANVAS_PADDING_PX = 24
 LEGEND_MARGIN_PX = 16
-TILE_DARKEN_OVERLAY = (0, 0, 0, 80)
+TILE_DARKEN_OVERLAY = (0, 0, 0, 120)
 
 # TODO(map-v2): explore further smoothing/anti-aliasing for extreme zoom levels,
 # or switching to an SVG/vector-based route renderer if we ever need ultra-high DPI.
@@ -150,6 +150,7 @@ def _get_tile_from_cache(z: int, x: int, y: int) -> Optional[bytes]:
             age = time.time() - (fetched_at or 0)
             if age > MAP_TILE_CACHE_TTL_SECONDS:
                 return None
+        print(f"[MAP] tile sqlite cache hit {z}/{x}/{y}")
         return data
     except Exception as exc:
         print(f"[MAP] Tile cache read failed for {z}/{x}/{y}: {exc}")
@@ -165,6 +166,7 @@ def _store_tile_in_cache(z: int, x: int, y: int, data: bytes) -> None:
             (z, x, y, int(time.time()), data),
         )
         db.commit()
+        print(f"[MAP] tile sqlite cache store {z}/{x}/{y}")
     except Exception as exc:
         print(f"[MAP] Tile cache write failed for {z}/{x}/{y}: {exc}")
 
@@ -312,8 +314,8 @@ def _apply_tile_overlay(bg: Image.Image) -> None:
 def _compute_route_width(size: Tuple[int, int]) -> int:
     """Derive a base stroke width relative to canvas size."""
     w, h = size
-    base = min(w, h) // 60
-    return max(4, min(base, 14))
+    base = min(w, h) // 45
+    return max(6, min(base, 16))
 
 
 def _draw_route_markers(
@@ -328,7 +330,7 @@ def _draw_route_markers(
         return
     start = points[0]
     end = points[-1]
-    r = max(ROUTE_MARKER_RADIUS, base_width // 2)
+    r = max(ROUTE_MARKER_RADIUS, int(base_width * 1.4))
     for (x, y), outline in ((start, start_outline), (end, end_outline)):
         bbox = (x - r, y - r, x + r, y + r)
         draw.ellipse(bbox, fill=ROUTE_MARKER_FILL, outline=outline, width=1)
@@ -393,6 +395,18 @@ def _render_route_image(
         )
 
         bbox = _compute_bbox(simplified_points)
+        target_aspect = max((width - 2 * max(70, ROUTE_CANVAS_PADDING_PX)) / max(height - 2 * max(70, ROUTE_CANVAS_PADDING_PX), 1), 1e-3)
+        min_lat_n, max_lat_n, min_lon_n, max_lon_n = _normalize_bbox_aspect(
+            bbox["min_lat"], bbox["max_lat"], bbox["min_lon"], bbox["max_lon"], target_aspect
+        )
+        bbox.update(
+            {
+                "min_lat": min_lat_n,
+                "max_lat": max_lat_n,
+                "min_lon": min_lon_n,
+                "max_lon": max_lon_n,
+            }
+        )
         print(
             f"[MAP] BBox lat({bbox['min_lat']:.4f},{bbox['max_lat']:.4f}) "
             f"lon({bbox['min_lon']:.4f},{bbox['max_lon']:.4f}) "
@@ -422,8 +436,10 @@ def _render_route_image(
         start_color = (64, 224, 208, 255)  # turquoise
         end_color = (244, 114, 182, 255)  # coral/pink
         marker_outline = (255, 255, 255, 60)
-        margin_px = max(90, ROUTE_CANVAS_PADDING_PX)
-        coords = _map_points_to_canvas(simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9)
+        margin_px = max(70, ROUTE_CANVAS_PADDING_PX)
+        coords = _map_points_to_canvas(
+            simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9, bbox=bbox
+        )
         smoothed_coords = _smooth_polyline(
             coords,
             min_total_points=250,
@@ -485,17 +501,17 @@ def _render_route_image(
             route_draw = ImageDraw.Draw(route_layer, "RGBA")
             base_width = _compute_route_width((draw_width, draw_height))
 
-            # Shadow -> glow -> gradient
+            # Shadow -> glow -> gradient for strong contrast
             route_draw.line(
                 smoothed_scaled,
                 fill=ROUTE_SHADOW_COLOR,
-                width=int(base_width + 4),
+                width=int(base_width + 6),
                 joint="curve",
             )
             route_draw.line(
                 smoothed_scaled,
                 fill=ROUTE_GLOW_COLOR,
-                width=int(base_width + 2),
+                width=int(base_width + 3),
                 joint="curve",
             )
             _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(base_width))
@@ -651,21 +667,61 @@ def _compute_bbox(points: List[Tuple[float, float]], padding_ratio: float = 0.15
     }
 
 
+def _normalize_bbox_aspect(
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float,
+    target_aspect: float,
+) -> Tuple[float, float, float, float]:
+    """
+    Expand bbox (never shrink) to match target aspect (width/height after cos(lat)).
+    """
+    center_lat = (min_lat + max_lat) / 2.0
+    center_lon = (min_lon + max_lon) / 2.0
+    lat_span = max(max_lat - min_lat, 1e-6)
+    lon_span = max(max_lon - min_lon, 1e-6)
+    center_lat_rad = math.radians(center_lat)
+    lon_span_vis = lon_span * math.cos(center_lat_rad)
+    bbox_aspect = lon_span_vis / lat_span
+
+    if bbox_aspect < target_aspect:
+        lon_span_vis_new = target_aspect * lat_span
+        lon_span_new = lon_span_vis_new / max(math.cos(center_lat_rad), 1e-6)
+        min_lon = center_lon - lon_span_new / 2
+        max_lon = center_lon + lon_span_new / 2
+    else:
+        lat_span_new = lon_span_vis / target_aspect
+        min_lat = center_lat - lat_span_new / 2
+        max_lat = center_lat + lat_span_new / 2
+
+    return min_lat, max_lat, min_lon, max_lon
+
+
 def _map_points_to_canvas(
     points: List[Tuple[float, float]],
     width: int,
     height: int,
     margin_px: int = 80,
-    shrink_factor: float = 0.9,
+    shrink_factor: float = 0.96,
+    bbox: Optional[dict] = None,
 ) -> List[Tuple[float, float]]:
     """Project lat/lon to canvas using local equirectangular projection and fixed margins."""
     if not points:
         return []
 
-    lats = [lat for lat, _ in points]
-    lons = [lon for _, lon in points]
-    lat_center = sum(lats) / len(lats)
-    lon_center = sum(lons) / len(lons)
+    if bbox:
+        min_lat = bbox["min_lat"]
+        max_lat = bbox["max_lat"]
+        min_lon = bbox["min_lon"]
+        max_lon = bbox["max_lon"]
+        lat_center = (min_lat + max_lat) / 2.0
+        lon_center = (min_lon + max_lon) / 2.0
+    else:
+        lats = [lat for lat, _ in points]
+        lons = [lon for _, lon in points]
+        lat_center = sum(lats) / len(lats)
+        lon_center = sum(lons) / len(lons)
     lat_center_rad = math.radians(lat_center)
 
     locals_xy: List[Tuple[float, float]] = []
@@ -674,15 +730,21 @@ def _map_points_to_canvas(
         dy = (lat - lat_center)
         locals_xy.append((dx, dy))
 
-    xs = [x for x, _ in locals_xy]
-    ys = [y for _, y in locals_xy]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-
-    data_width = max_x - min_x
-    data_height = max_y - min_y
-    cx_data = (min_x + max_x) / 2.0
-    cy_data = (min_y + max_y) / 2.0
+    if bbox:
+        data_width = (max_lon - min_lon) * math.cos(lat_center_rad)
+        data_height = max_lat - min_lat
+        min_x, max_x = -data_width / 2.0, data_width / 2.0
+        min_y, max_y = -data_height / 2.0, data_height / 2.0
+        cx_data, cy_data = 0.0, 0.0
+    else:
+        xs = [x for x, _ in locals_xy]
+        ys = [y for _, y in locals_xy]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        data_width = max_x - min_x
+        data_height = max_y - min_y
+        cx_data = (min_x + max_x) / 2.0
+        cy_data = (min_y + max_y) / 2.0
 
     cx_canvas = width / 2.0
     cy_canvas = height / 2.0
@@ -753,6 +815,12 @@ def _interpolate_color(
     return tuple(int(s + (e - s) * t) for s, e in zip(start, end))
 
 
+def _measure_text(font: ImageFont.FreeTypeFont, text: str) -> Tuple[int, int]:
+    """Safely measure text size across Pillow versions using getbbox."""
+    bbox = font.getbbox(text)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
 def _draw_legend(
     draw: ImageDraw.ImageDraw,
     width: int,
@@ -764,7 +832,7 @@ def _draw_legend(
 ) -> None:
     """Draw a small legend in the top-right corner."""
     padding = int(LEGEND_MARGIN_PX * scale)
-    line_len = int(70 * scale)
+    line_len = int(60 * scale)
     line_gap = int(18 * scale)
     radius = int(5 * scale)
     text_offset = int(8 * scale)
@@ -775,7 +843,15 @@ def _draw_legend(
     except Exception:
         font = ImageFont.load_default()
 
-    x0 = width - padding - line_len
+    # Measure text to avoid clipping
+    start_text = "Start"
+    end_text = "End"
+    start_w, _ = _measure_text(font, start_text)
+    end_w, _ = _measure_text(font, end_text)
+    text_w = max(start_w, end_w)
+
+    x0 = width - padding - line_len - text_offset - text_w
+    x0 = max(padding, x0)
     y0 = padding
 
     # Start
