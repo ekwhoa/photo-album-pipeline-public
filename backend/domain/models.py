@@ -5,7 +5,7 @@ These are framework-agnostic and can be used across all services.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 
@@ -330,3 +330,27 @@ class PageLayout:
     photos_count: Optional[int] = None
     # Optional book identifier for downstream rendering
     book_id: Optional[str] = None
+
+
+@dataclass
+class ItineraryStop:
+    """A single stop/segment within a day for itinerary purposes."""
+    segment_index: int
+    distance_km: float
+    duration_hours: float
+    location_short: Optional[str] = None
+    location_full: Optional[str] = None
+    polyline: Optional[List[Tuple[float, float]]] = None
+
+
+@dataclass
+class ItineraryDay:
+    """Aggregated itinerary information for a single day."""
+    day_index: int
+    date_iso: str
+    photos_count: int
+    segments_total_distance_km: float
+    segments_total_duration_hours: float
+    location_short: Optional[str] = None
+    location_full: Optional[str] = None
+    stops: List[ItineraryStop] = field(default_factory=list)

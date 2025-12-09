@@ -12,6 +12,8 @@ from repositories import BooksRepository, AssetsRepository
 from storage.file_storage import FileStorage
 from services.book_planner import plan_book, get_book_segment_debug
 from services.timeline import TimelineService
+from services.itinerary import build_book_itinerary
+from services.curation import filter_approved
 
 router = APIRouter()
 books_repo = BooksRepository()
@@ -91,6 +93,31 @@ class UsageDebugResponse(BaseModel):
     hidden_asset_ids: List[str]
     missing_asset_ids: List[str]
     pages: List[dict]
+
+
+class ItineraryStopResponse(BaseModel):
+    segment_index: int
+    distance_km: float
+    duration_hours: float
+    location_short: Optional[str] = None
+    location_full: Optional[str] = None
+    polyline: Optional[List[tuple[float, float]]] = None
+
+
+class ItineraryDayResponse(BaseModel):
+    day_index: int
+    date_iso: str
+    photos_count: int
+    segments_total_distance_km: float
+    segments_total_duration_hours: float
+    location_short: Optional[str] = None
+    location_full: Optional[str] = None
+    stops: List[ItineraryStopResponse]
+
+
+class BookItineraryResponse(BaseModel):
+    book_id: str
+    days: List[ItineraryDayResponse]
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -204,6 +231,47 @@ async def segment_debug(book_id: str):
 
         data = get_book_segment_debug(book_id, days, approved_assets)
         return BookSegmentDebugResponse(**data)
+
+
+@router.get("/{book_id}/itinerary", response_model=BookItineraryResponse)
+async def itinerary(book_id: str):
+    """Return a structured itinerary grouped by day with segment summaries."""
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        approved_assets = assets_repo.list_assets(session, book_id, status=None)
+        approved_assets = filter_approved(approved_assets)
+        timeline_service = TimelineService()
+        days = timeline_service.organize_assets_by_day(approved_assets)
+
+        itinerary_days = build_book_itinerary(book, days, approved_assets)
+        response_days = [
+            ItineraryDayResponse(
+                day_index=d.day_index,
+                date_iso=d.date_iso,
+                photos_count=d.photos_count,
+                segments_total_distance_km=d.segments_total_distance_km,
+                segments_total_duration_hours=d.segments_total_duration_hours,
+                location_short=d.location_short,
+                location_full=d.location_full,
+                stops=[
+                    ItineraryStopResponse(
+                        segment_index=s.segment_index,
+                        distance_km=s.distance_km,
+                        duration_hours=s.duration_hours,
+                        location_short=s.location_short,
+                        location_full=s.location_full,
+                        polyline=s.polyline,
+                    )
+                    for s in d.stops
+                ],
+            )
+            for d in itinerary_days
+        ]
+
+        return BookItineraryResponse(book_id=book.id, days=response_days)
 
 
 @router.get("", response_model=List[BookResponse])
