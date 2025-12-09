@@ -17,8 +17,11 @@ def _mock_tile_response():
     return resp
 
 
-def test_fetch_tile_cached_uses_cache(monkeypatch):
+def test_fetch_tile_cached_uses_cache(monkeypatch, tmp_path):
     mrr._fetch_tile_cached.cache_clear()
+    # isolate sqlite cache so cross-test state doesn't influence call counts
+    monkeypatch.setattr(mrr, "MAP_TILE_CACHE_PATH", tmp_path / "tiles_http_test.sqlite", raising=False)
+    monkeypatch.setattr(mrr, "_CACHE_DB", None, raising=False)
     monkeypatch.setattr(mrr, "MAP_TILES_ENABLED", True)
     monkeypatch.setattr(mrr, "MAP_TILE_URL_TEMPLATE", "http://example/{z}/{x}/{y}.png")
 

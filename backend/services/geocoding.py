@@ -11,6 +11,7 @@ import time
 import threading
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Iterable, Optional, Tuple
@@ -26,6 +27,10 @@ _MIN_INTERVAL_SEC = float(os.getenv("NOMINATIM_MIN_INTERVAL", "1.1"))
 _logged_ua = False
 NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT")
 NOMINATIM_REFERER = os.getenv("NOMINATIM_REFERER")
+NOMINATIM_CACHE_PATH = os.getenv("NOMINATIM_CACHE_PATH")
+if not NOMINATIM_CACHE_PATH:
+    NOMINATIM_CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "geocode_cache.sqlite")
+NOMINATIM_CACHE_TTL_SECONDS = int(os.getenv("NOMINATIM_CACHE_TTL_SECONDS", str(180 * 24 * 3600)))
 
 FALLBACK_UA = "photo-album-pipeline/0.1 (contact: example@example.com)"
 if NOMINATIM_USER_AGENT is None:
@@ -45,6 +50,9 @@ NOMINATIM_HEADERS = {
 }
 if NOMINATIM_REFERER:
     NOMINATIM_HEADERS["Referer"] = NOMINATIM_REFERER
+
+_CACHE_DB_LOCK = threading.Lock()
+_CACHE_DB: Optional[sqlite3.Connection] = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +103,91 @@ def _throttled_get(
     return _session.get(url, params=params, headers=headers, timeout=timeout)
 
 
+def _get_geocode_db() -> sqlite3.Connection:
+    """Lazily open the geocode cache DB and ensure schema exists."""
+    global _CACHE_DB
+    with _CACHE_DB_LOCK:
+        if _CACHE_DB is None:
+            os.makedirs(os.path.dirname(NOMINATIM_CACHE_PATH), exist_ok=True)
+            _CACHE_DB = sqlite3.connect(NOMINATIM_CACHE_PATH)
+            _CACHE_DB.execute(
+                """
+                CREATE TABLE IF NOT EXISTS geocodes (
+                    lat REAL NOT NULL,
+                    lon REAL NOT NULL,
+                    zoom INTEGER NOT NULL,
+                    fetched_at INTEGER NOT NULL,
+                    short_label TEXT,
+                    full_label TEXT,
+                    PRIMARY KEY (lat, lon, zoom)
+                )
+                """
+            )
+            _CACHE_DB.commit()
+        return _CACHE_DB
+
+
+def _get_geocode_from_cache(lat: float, lon: float, zoom: int) -> Optional[PlaceLabel]:
+    """Lookup geocode result in SQLite cache respecting TTL."""
+    try:
+        db = _get_geocode_db()
+        cur = db.execute(
+            "SELECT fetched_at, short_label, full_label FROM geocodes WHERE lat=? AND lon=? AND zoom=?",
+            (lat, lon, zoom),
+        )
+        row = cur.fetchone()
+        if not row:
+            print(f"[GEOCODE] cache miss {lat},{lon} z={zoom}")
+            return None
+        fetched_at, short_label, full_label = row
+        if NOMINATIM_CACHE_TTL_SECONDS > 0:
+            age = time.time() - (fetched_at or 0)
+            if age > NOMINATIM_CACHE_TTL_SECONDS:
+                print(f"[GEOCODE] cache expired {lat},{lon} z={zoom}")
+                return None
+        print(f"[GEOCODE] cache hit {lat},{lon} z={zoom}")
+        label = PlaceLabel(city=None, state=None, country=None)
+        # Rebuild label from stored strings where possible
+        # We can't fully reconstruct city/state/country reliably from short/full,
+        # so store in short_label/full_label form.
+        # Use full_label first if it exists, otherwise short_label.
+        if full_label:
+            parts = [p.strip() for p in full_label.split(",") if p.strip()]
+            if len(parts) >= 3:
+                label = PlaceLabel(city=parts[0], state=parts[1], country=parts[2])
+            elif len(parts) == 2:
+                label = PlaceLabel(city=parts[0], state=parts[1], country=None)
+            elif len(parts) == 1:
+                label = PlaceLabel(city=parts[0], state=None, country=None)
+        elif short_label:
+            parts = [p.strip() for p in short_label.split(",") if p.strip()]
+            if len(parts) >= 3:
+                label = PlaceLabel(city=parts[0], state=parts[1], country=parts[2])
+            elif len(parts) == 2:
+                label = PlaceLabel(city=parts[0], state=parts[1], country=None)
+            elif len(parts) == 1:
+                label = PlaceLabel(city=parts[0], state=None, country=None)
+        return label if label.short_label else None
+    except Exception as exc:
+        print(f"[GEOCODE] cache read failed for {lat},{lon} z={zoom}: {exc}")
+        return None
+
+
+def _store_geocode_in_cache(lat: float, lon: float, zoom: int, label: PlaceLabel) -> None:
+    """Upsert geocode result into SQLite cache."""
+    try:
+        db = _get_geocode_db()
+        db.execute(
+            "INSERT OR REPLACE INTO geocodes (lat, lon, zoom, fetched_at, short_label, full_label) VALUES (?, ?, ?, ?, ?, ?)",
+            (lat, lon, zoom, int(time.time()), label.short_label, label.short_label),
+        )
+        db.commit()
+        print(f"[GEOCODE] cache store {lat},{lon} z={zoom}")
+    except Exception as exc:
+        print(f"[GEOCODE] cache write failed for {lat},{lon} z={zoom}: {exc}")
+        return
+
+
 @lru_cache(maxsize=512)
 def reverse_geocode_label(lat: float, lon: float) -> Optional[PlaceLabel]:
     """Reverse geocode a coordinate into a PlaceLabel using Nominatim.
@@ -102,79 +195,49 @@ def reverse_geocode_label(lat: float, lon: float) -> Optional[PlaceLabel]:
     Returns None on network or parsing errors. Results are cached and inputs
     rounded to avoid hammering the upstream service.
     """
-    lat = _round_coord(lat)
-    lon = _round_coord(lon)
+    lat_r = _round_coord(lat)
+    lon_r = _round_coord(lon)
+    zoom_val = 10
 
-    params = {
-        "format": "jsonv2",
-        "lat": str(lat),
-        "lon": str(lon),
-        "zoom": "10",  # city / region-ish
-        "addressdetails": "1",
-    }
+    cached = _get_geocode_from_cache(lat_r, lon_r, zoom_val)
+    if cached:
+        return cached
+    print(f"[GEOCODE] cache miss {lat_r},{lon_r} z={zoom_val}")
 
     global _logged_ua
     if not _logged_ua:
         logger.debug("Nominatim User-Agent: %s", _redact_email(_ua_value))
         _logged_ua = True
 
-    logger.debug(
-        "Nominatim reverse geocode: url=%s lat=%s lon=%s params=%r ua_set=%s referer_set=%s",
-        NOMINATIM_BASE_URL,
-        lat,
-        lon,
-        params,
-        bool(NOMINATIM_USER_AGENT),
-        bool(NOMINATIM_REFERER),
-    )
+    params = {
+        "format": "jsonv2",
+        "lat": str(lat_r),
+        "lon": str(lon_r),
+        "zoom": str(zoom_val),
+        "addressdetails": "1",
+    }
 
     try:
         resp = _throttled_get(
             NOMINATIM_BASE_URL, params=params, headers=NOMINATIM_HEADERS, timeout=5.0
         )
-        if resp.status_code != 200:
-            logger.warning(
-                "Nominatim reverse geocode failed: %s %s ua_set=%s referer_set=%s",
-                resp.status_code,
-                resp.text[:1000],
-                bool(NOMINATIM_USER_AGENT),
-                bool(NOMINATIM_REFERER),
-            )
-            resp.raise_for_status()
-        data = resp.json()
-        logger.debug(
-            "Nominatim reverse geocode success: keys=%s",
-            list(data.keys()) if isinstance(data, dict) else data.__class__.__name__,
+    except Exception as exc:
+        logger.warning(
+            "Nominatim reverse geocode error for lat=%s lon=%s: %s", lat_r, lon_r, exc
         )
-    except requests.HTTPError as e:
-        resp = getattr(e, "response", None)
-        body_snippet = ""
-        if resp is not None:
-            try:
-                body_snippet = resp.text[:1000]
-            except Exception:
-                body_snippet = "<could not read response body>"
+        return None
 
-        logger.warning(
-            "Nominatim reverse geocode HTTPError lat=%s lon=%s status=%s: %s\nResponse body (truncated):\n%s",
-            lat,
-            lon,
-            getattr(resp, "status_code", "?"),
-            e,
-            body_snippet,
-        )
+    if resp is None:
         return None
-    except requests.RequestException as e:
+
+    try:
+        data = resp.json()
+    except Exception as exc:
         logger.warning(
-            "Nominatim reverse geocode error for lat=%s lon=%s: %s", lat, lon, e
-        )
-        return None
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(
-            "Nominatim reverse geocode unexpected error for lat=%s lon=%s: %s",
-            lat,
-            lon,
-            e,
+            "Nominatim reverse geocode JSON error for lat=%s lon=%s: %s",
+            lat_r,
+            lon_r,
+            exc,
         )
         return None
 
@@ -191,6 +254,10 @@ def reverse_geocode_label(lat: float, lon: float) -> Optional[PlaceLabel]:
     label = PlaceLabel(city=city, state=state, country=country)
     if not label.short_label:
         return None
+    try:
+        _store_geocode_in_cache(lat_r, lon_r, zoom_val, label)
+    except Exception as exc:  # pragma: no cover
+        print(f"[GEOCODE] cache store error for {lat_r},{lon_r} z={zoom_val}: {exc}")
     return label
 
 
