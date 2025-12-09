@@ -36,6 +36,7 @@ import {
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
+import { useBookItinerary } from '@/hooks/useBookItinerary';
 import { toast } from 'sonner';
 
 export default function BookDetailPage() {
@@ -57,6 +58,7 @@ export default function BookDetailPage() {
   const [showClusters, setShowClusters] = useState(false);
   const dedupe = useBookDedupeDebug(id);
   const segments = useBookSegmentDebug(id);
+  const itinerary = useBookItinerary(id);
   const [expandedSegmentDays, setExpandedSegmentDays] = useState<Set<number>>(new Set());
 
   const dayIndexByPageIndex = useMemo(() => {
@@ -646,6 +648,54 @@ export default function BookDetailPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between">
+                <div>
+                  <CardTitle>Itinerary (beta)</CardTitle>
+                  <CardDescription>Simple day-by-day stops derived from segments.</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {itinerary.loading && <p className="text-sm text-muted-foreground">Loading itinerary…</p>}
+                {itinerary.error && (
+                  <p className="text-sm text-destructive">Couldn’t load itinerary right now.</p>
+                )}
+                {!itinerary.loading && !itinerary.error && itinerary.data && (
+                  <>
+                    {(!itinerary.data.days || itinerary.data.days.length === 0) && (
+                      <p className="text-sm text-muted-foreground">No itinerary available for this book yet.</p>
+                    )}
+                    {itinerary.data.days && itinerary.data.days.length > 0 && (
+                      <div className="space-y-2">
+                        {itinerary.data.days.map((day) => (
+                          <div key={day.day_index} className="rounded-md border bg-muted/40 p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium text-foreground">
+                                Day {day.day_index} —{' '}
+                                {day.date_iso ? new Date(day.date_iso).toLocaleDateString() : 'Unknown date'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {formatItinerarySummary(day)}
+                              </div>
+                            </div>
+                            {day.stops && day.stops.length > 0 && (
+                              <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                                {day.stops.map((stop, idx) => (
+                                  <li key={stop.segment_index ?? idx}>
+                                    {stop.location_short || stop.location_full || '(Unnamed location)'}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Preview Tab */}
@@ -870,6 +920,24 @@ function formatDuration(mins?: number | null) {
 function formatDistance(km?: number | null) {
   if (km === null || km === undefined) return 'Distance: —';
   return `Distance: ~${km.toFixed(1)} km`;
+}
+
+function formatItinerarySummary(day: {
+  photos_count: number;
+  stops: unknown[];
+  segments_total_distance_km?: number;
+  segments_total_duration_hours?: number;
+}) {
+  const parts: string[] = [];
+  parts.push(`${day.photos_count} photo${day.photos_count === 1 ? '' : 's'}`);
+  parts.push(`${day.stops?.length || 0} segment${(day.stops?.length || 0) === 1 ? '' : 's'}`);
+  if (typeof day.segments_total_distance_km === 'number') {
+    parts.push(`~${day.segments_total_distance_km.toFixed(1)} km`);
+  }
+  if (typeof day.segments_total_duration_hours === 'number') {
+    parts.push(`${day.segments_total_duration_hours.toFixed(1)} h`);
+  }
+  return parts.join(' • ');
 }
 
 type DayStats = {

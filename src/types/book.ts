@@ -106,6 +106,31 @@ export interface MapRoutePage {
   [key: string]: any;
 }
 
+export interface ItineraryStop {
+  segment_index: number;
+  distance_km: number;
+  duration_hours: number;
+  location_short: string | null;
+  location_full: string | null;
+  polyline: [number, number][] | null;
+}
+
+export interface ItineraryDay {
+  day_index: number;
+  date_iso: string;
+  photos_count: number;
+  segments_total_distance_km: number;
+  segments_total_duration_hours: number;
+  location_short: string | null;
+  location_full: string | null;
+  stops: ItineraryStop[];
+}
+
+export interface BookItinerary {
+  book_id: string;
+  days: ItineraryDay[];
+}
+
 export const BOOK_SIZES = [
   { value: '8x8', label: '8" × 8" Square' },
   { value: '10x10', label: '10" × 10" Square' },

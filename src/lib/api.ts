@@ -1,5 +1,6 @@
 // API client for communicating with the Python backend
 // Default to localhost:8000 for local development
+import type { BookItinerary } from '@/types/book';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -106,6 +107,8 @@ export interface BookSegmentDebugResponse {
   days: SegmentDebugDay[];
 }
 
+export interface BookItineraryResponse extends BookItinerary {}
+
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -135,6 +138,7 @@ export const booksApi = {
   get: (id: string) => apiRequest<Book>(`/books/${id}`),
   getDedupeDebug: (id: string) => apiRequest<BookDedupeDebug>(`/books/${id}/dedupe_debug`),
   getSegmentDebug: (id: string) => apiRequest<BookSegmentDebugResponse>(`/books/${id}/segment_debug`),
+  getItinerary: (id: string) => apiRequest<BookItinerary>(`/books/${id}/itinerary`),
   
   create: (data: { title: string; size: string }) =>
     apiRequest<Book>('/books', {
