@@ -73,3 +73,8 @@ def test_itinerary_endpoint_returns_days(
     assert data["days"][0]["day_index"] == 1
     assert "locations" in data["days"][0]
     assert isinstance(data["days"][0]["locations"], list)
+    first_stop = data["days"][0]["stops"][0] if data["days"][0]["stops"] else None
+    if first_stop:
+        assert "kind" in first_stop
+        assert first_stop["kind"] in ["travel", "local"]
+        assert "time_bucket" in first_stop

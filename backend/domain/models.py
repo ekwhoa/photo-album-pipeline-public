@@ -341,6 +341,8 @@ class ItineraryStop:
     location_short: Optional[str] = None
     location_full: Optional[str] = None
     polyline: Optional[List[Tuple[float, float]]] = None
+    kind: str = "local"  # "travel" or "local"
+    time_bucket: Optional[str] = None  # "morning"|"afternoon"|"evening"|"night"|None
 
 
 @dataclass

@@ -102,6 +102,8 @@ class ItineraryStopResponse(BaseModel):
     location_short: Optional[str] = None
     location_full: Optional[str] = None
     polyline: Optional[List[tuple[float, float]]] = None
+    kind: str = "local"
+    time_bucket: Optional[str] = None
 
 
 class ItineraryLocationResponse(BaseModel):
@@ -277,6 +279,8 @@ async def itinerary(book_id: str):
                         location_short=s.location_short,
                         location_full=s.location_full,
                         polyline=s.polyline,
+                        kind=s.kind,
+                        time_bucket=s.time_bucket,
                     )
                     for s in d.stops
                 ],

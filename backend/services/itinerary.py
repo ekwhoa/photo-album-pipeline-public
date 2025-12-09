@@ -19,6 +19,31 @@ from services.book_planner import _build_segments_for_day, _build_segment_summar
 ITINERARY_MAX_KM_PER_DAY = float(os.getenv("ITINERARY_MAX_KM_PER_DAY", "800"))
 
 
+def _classify_stop_kind(distance_km: float, duration_hours: float) -> str:
+    """
+    Classify a stop as 'travel' or 'local' using simple heuristics.
+    """
+    if distance_km >= 150 or duration_hours >= 4:
+        return "travel"
+    return "local"
+
+
+def _bucket_time_of_day(ts: Optional[datetime]) -> Optional[str]:
+    """
+    Bucket a datetime into morning/afternoon/evening/night. Returns None if ts is None.
+    """
+    if ts is None:
+        return None
+    hour = ts.hour
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 22:
+        return "evening"
+    return "night"
+
+
 def _label_from_polyline(polyline: Optional[List[Tuple[float, float]]]) -> Tuple[Optional[str], Optional[str]]:
     """Compute (short, full) labels from a polyline centroid using the geocoder."""
     if not polyline:
@@ -120,14 +145,20 @@ def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> Li
                 display_label = _truncate_label_to_two_parts(full)
             elif short:
                 display_label = _truncate_label_to_two_parts(short)
+            distance_km = summary.get("distance_km", 0.0) or 0.0
+            duration_hours = summary.get("duration_hours", 0.0) or 0.0
+            kind = _classify_stop_kind(distance_km, duration_hours)
+            time_bucket = None  # No per-segment timestamps yet; reserved for future use.
             stops.append(
                 ItineraryStop(
                     segment_index=summary.get("index", len(stops) + 1),
-                    distance_km=summary.get("distance_km", 0.0) or 0.0,
-                    duration_hours=summary.get("duration_hours", 0.0) or 0.0,
+                    distance_km=distance_km,
+                    duration_hours=duration_hours,
                     location_short=short,
                     location_full=full,
                     polyline=polyline,
+                    kind=kind,
+                    time_bucket=time_bucket,
                 )
             )
             key = _normalize_location_key(display_label or short or full)
