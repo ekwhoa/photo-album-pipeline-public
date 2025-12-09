@@ -313,7 +313,7 @@ class LayoutRect:
     image_url: Optional[str] = None   # Web URL for live preview
 
 
-@dataclass 
+@dataclass
 class PageLayout:
     """The computed layout for a single page."""
     page_index: int
@@ -322,6 +322,8 @@ class PageLayout:
     elements: List[LayoutRect] = field(default_factory=list)
     spread_slot: Optional[str] = None  # For photo_spread pages ("left"|"right")
     layout_variant: Optional[str] = None
+    segment_id: Optional[str] = None
+    segment_kind: Optional[str] = None
     # Optional segment metadata for day/map pages
     segment_count: Optional[int] = None
     segments_total_distance_km: Optional[float] = None

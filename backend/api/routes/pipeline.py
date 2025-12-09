@@ -33,6 +33,8 @@ class PagePreviewResponse(BaseModel):
     asset_ids: List[str] | None = None
     hero_asset_id: str | None = None
     layout_variant: str | None = None
+    segment_id: str | None = None
+    segment_kind: str | None = None
     segment_count: int | None = None
     segments_total_distance_km: float | None = None
     segments_total_duration_hours: float | None = None
@@ -219,6 +221,8 @@ async def get_pages(book_id: str):
                 asset_ids=asset_ids,
                 hero_asset_id=hero_asset_id,
                 layout_variant=layout_variant,
+                segment_id=page.payload.get("segment_id"),
+                segment_kind=page.payload.get("segment_kind"),
                 segment_count=segment_count,
                 segments_total_distance_km=segments_total_distance_km,
                 segments_total_duration_hours=segments_total_duration_hours,

@@ -41,7 +41,8 @@ export type GridLayoutVariant =
   | 'grid_4_simple'
   | 'grid_2up'
   | 'grid_3up_hero'
-  | 'grid_6_dense';
+  | 'grid_6_dense'
+  | 'segment_local_highlight_v1';
 
 export interface SegmentSummary {
   index: number;
@@ -132,6 +133,22 @@ export interface ItineraryDay {
 export interface BookItinerary {
   book_id: string;
   days: ItineraryDay[];
+}
+
+export interface BookPage {
+  index: number;
+  page_type: PageType | string;
+  summary?: string;
+  asset_ids?: string[];
+  hero_asset_id?: string | null;
+  layout_variant?: GridLayoutVariant | string | null;
+  segment_id?: string | null;
+  segment_kind?: 'local' | 'travel' | string | null;
+  segment_count?: number | null;
+  segments_total_distance_km?: number | null;
+  segments_total_duration_hours?: number | null;
+  segments?: SegmentSummary[] | any[];
+  [key: string]: any;
 }
 
 export const BOOK_SIZES = [

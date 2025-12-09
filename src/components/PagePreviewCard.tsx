@@ -115,6 +115,17 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
               {page.index + 1}
             </span>
           </div>
+          {page.segment_kind && (
+            <div className="absolute top-2 right-2">
+              <span className="text-[10px] uppercase tracking-wide px-2 py-1 rounded-full bg-background/90 border text-foreground shadow-sm">
+                {page.segment_kind === 'local'
+                  ? 'Local segment'
+                  : page.segment_kind === 'travel'
+                  ? 'Travel segment'
+                  : page.segment_kind}
+              </span>
+            </div>
+          )}
         </div>
         <div className="p-3 border-t">
           <div className="flex items-center gap-2">

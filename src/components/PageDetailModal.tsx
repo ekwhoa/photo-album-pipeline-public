@@ -88,6 +88,15 @@ export function PageDetailModal({
           <DialogTitle className="flex items-center gap-2">
             {icon}
             Page {page.index + 1} – {label}
+            {page.segment_kind && (
+              <span className="text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full border bg-muted text-muted-foreground">
+                {page.segment_kind === 'local'
+                  ? 'Local segment'
+                  : page.segment_kind === 'travel'
+                  ? 'Travel segment'
+                  : page.segment_kind}
+              </span>
+            )}
           </DialogTitle>
         </DialogHeader>
 

@@ -53,6 +53,10 @@ def compute_all_layouts(pages: List[Page], context: RenderContext, book_id: str 
         layout = compute_layout(page, context)
         # Attach book_id for downstream consumers (optional)
         layout.book_id = book_id
+        # Propagate segment metadata when present
+        if isinstance(page.payload, dict):
+            layout.segment_id = page.payload.get("segment_id")
+            layout.segment_kind = page.payload.get("segment_kind")
         layouts.append(layout)
     return layouts
 

@@ -28,6 +28,11 @@ _grid_variant_counter = 0  # tracks per-day usage of special 4-photo variant
 HIGH_SIMILARITY_THRESHOLD = 0.92  # only treat as true duplicates when this high
 MIN_CLUSTER_SIZE_FOR_AUTO_HIDE = 3  # never auto-hide if only 2 photos
 
+# Segment highlight tuning
+MIN_PHOTOS_FOR_HIGHLIGHT = 6
+MIN_DURATION_HOURS_FOR_HIGHLIGHT = 0.5
+MAX_DISTANCE_KM_FOR_LOCAL_HIGHLIGHT = 15.0
+
 # Day layout profile heuristics (controls full-page bias per day)
 @dataclass
 class DayLayoutProfile:
@@ -45,6 +50,30 @@ def compute_day_layout_profile(photo_count: int, segment_count: int) -> DayLayou
     if photo_count <= 40 and segment_count <= 2:
         return DayLayoutProfile(max_full_page_photos=1, prefer_full_page_for_leftovers=False)
     return DayLayoutProfile(max_full_page_photos=1, prefer_full_page_for_leftovers=False)
+
+
+def _classify_segment_kind(distance_km: float, duration_hours: float) -> str:
+    """Lightweight segment kind classifier aligned with itinerary heuristics."""
+    if distance_km >= 150 or duration_hours >= 4:
+        return "travel"
+    return "local"
+
+
+def _is_notable_local_segment(summary: Dict[str, Any]) -> bool:
+    """Decide whether a segment deserves a highlight page."""
+    kind = summary.get("kind") or "local"
+    asset_ids = summary.get("asset_ids") or []
+    distance_km = summary.get("distance_km") or 0.0
+    duration_hours = summary.get("duration_hours") or 0.0
+    if kind != "local":
+        return False
+    if len(asset_ids) < MIN_PHOTOS_FOR_HIGHLIGHT:
+        return False
+    if duration_hours < MIN_DURATION_HOURS_FOR_HIGHLIGHT:
+        return False
+    if distance_km <= 0 or distance_km > MAX_DISTANCE_KM_FOR_LOCAL_HIGHLIGHT:
+        return False
+    return True
 
 
 def plan_book(
@@ -208,6 +237,31 @@ def plan_book(
         )
         current_index += 1
         _reset_grid_variant_counter()
+        # Add segment highlight pages for notable local segments
+        highlight_seen: set[str] = set()
+        for seg_summary in day_segment_summaries:
+            if not _is_notable_local_segment(seg_summary):
+                continue
+            segment_id = f"day{day_index}_segment{seg_summary.get('index')}"
+            if segment_id in highlight_seen:
+                continue
+            asset_ids_for_seg = seg_summary.get("asset_ids") or []
+            if not asset_ids_for_seg:
+                continue
+            highlight_seen.add(segment_id)
+            interior_pages.append(
+                Page(
+                    index=current_index,
+                    page_type=PageType.PHOTO_GRID,
+                    payload={
+                        "asset_ids": asset_ids_for_seg,
+                        "layout_variant": "segment_local_highlight_v1",
+                        "segment_id": segment_id,
+                        "segment_kind": seg_summary.get("kind") or "local",
+                    },
+                )
+            )
+            current_index += 1
         # Optional full-page hero for the day
         day_remaining = list(day_ids)
         if (
@@ -985,6 +1039,8 @@ def _build_segment_summaries(
         duration_minutes = seg.get("duration_minutes")
         duration_hours = duration_minutes / 60.0 if duration_minutes is not None else None
         distance_km = seg.get("approx_distance_km", 0.0) or 0.0
+        kind = _classify_segment_kind(distance_km, duration_hours or 0.0)
+        asset_ids = seg.get("asset_ids") or []
 
         summaries.append(
             {
@@ -994,6 +1050,8 @@ def _build_segment_summaries(
                 "start_label": None,  # placeholder; no reverse geocoding
                 "end_label": None,
                 "polyline": polyline if polyline else None,
+                "asset_ids": asset_ids,
+                "kind": kind,
             }
         )
     return summaries
