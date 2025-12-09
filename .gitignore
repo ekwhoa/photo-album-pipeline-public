@@ -50,6 +50,8 @@ __pycache__/
 media/
 backend/media/
 backend/data/
+backend/*.sqlite
+backend/*.sqlite3
 
 # Node / frontend (if you install locally)
 node_modules/
