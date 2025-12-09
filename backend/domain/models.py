@@ -354,3 +354,10 @@ class ItineraryDay:
     location_short: Optional[str] = None
     location_full: Optional[str] = None
     stops: List[ItineraryStop] = field(default_factory=list)
+    locations: List["ItineraryLocation"] = field(default_factory=list)
+
+
+@dataclass
+class ItineraryLocation:
+    location_short: Optional[str] = None
+    location_full: Optional[str] = None

@@ -71,3 +71,5 @@ def test_itinerary_endpoint_returns_days(
     assert data["book_id"] == "book1"
     assert isinstance(data["days"], list)
     assert data["days"][0]["day_index"] == 1
+    assert "locations" in data["days"][0]
+    assert isinstance(data["days"][0]["locations"], list)

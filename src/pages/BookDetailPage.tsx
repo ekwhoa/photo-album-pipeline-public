@@ -122,6 +122,43 @@ export default function BookDetailPage() {
     return map;
   }, [assets]);
 
+  const buildLocationLines = useMemo(
+    () =>
+      (day: {
+        locations?: { location_short: string | null; location_full: string | null }[];
+        stops: { location_short: string | null; location_full: string | null }[];
+      }) => {
+        const lines: string[] = [];
+        const seen = new Set<string>();
+
+        const truncateLabel = (label: string) => {
+          const parts = label
+            .split(',')
+            .map((p) => p.trim())
+            .filter(Boolean);
+          if (parts.length <= 2) return parts.join(', ');
+          return parts.slice(0, 2).join(', ');
+        };
+
+        const addLabel = (raw?: string | null) => {
+          if (!raw) return;
+          const truncated = truncateLabel(raw);
+          if (seen.has(truncated)) return;
+          seen.add(truncated);
+          lines.push(truncated);
+        };
+
+        if (day.locations && day.locations.length > 0) {
+          day.locations.forEach((loc) => addLabel(loc.location_short || loc.location_full));
+          return lines.slice(0, 3);
+        }
+
+        (day.stops || []).forEach((stop) => addLabel(stop.location_short || stop.location_full));
+        return lines.slice(0, 3);
+      },
+    []
+  );
+
   const loadBook = async () => {
     if (!id) return;
     try {
@@ -679,15 +716,17 @@ export default function BookDetailPage() {
                                 {formatItinerarySummary(day)}
                               </div>
                             </div>
-                            {day.stops && day.stops.length > 0 && (
-                              <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                                {day.stops.map((stop, idx) => (
-                                  <li key={stop.segment_index ?? idx}>
-                                    {stop.location_short || stop.location_full || '(Unnamed location)'}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
+                            {(() => {
+                              const lines = buildLocationLines(day);
+                              if (!lines.length) return null;
+                              return (
+                                <div className="mt-2 text-sm text-muted-foreground space-y-0.5">
+                                  {lines.map((line) => (
+                                    <div key={line}>{line}</div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </div>
                         ))}
                       </div>
@@ -922,6 +961,15 @@ function formatDistance(km?: number | null) {
   return `Distance: ~${km.toFixed(1)} km`;
 }
 
+function isReasonableDayDistanceKm(totalKm?: number | null, totalHours?: number | null) {
+  if (!totalKm || totalKm <= 0) return false;
+  if (totalKm <= 300) return true;
+  const hours = totalHours && totalHours > 0 ? totalHours : 0;
+  if (!hours) return false;
+  const avgSpeed = totalKm / hours;
+  return avgSpeed <= 150;
+}
+
 function formatItinerarySummary(day: {
   photos_count: number;
   stops: unknown[];
@@ -931,11 +979,14 @@ function formatItinerarySummary(day: {
   const parts: string[] = [];
   parts.push(`${day.photos_count} photo${day.photos_count === 1 ? '' : 's'}`);
   parts.push(`${day.stops?.length || 0} segment${(day.stops?.length || 0) === 1 ? '' : 's'}`);
-  if (typeof day.segments_total_distance_km === 'number') {
-    parts.push(`~${day.segments_total_distance_km.toFixed(1)} km`);
+  const km = typeof day.segments_total_distance_km === 'number' ? day.segments_total_distance_km : null;
+  const hours =
+    typeof day.segments_total_duration_hours === 'number' ? day.segments_total_duration_hours : null;
+  if (km && isReasonableDayDistanceKm(km, hours)) {
+    parts.push(`~${km.toFixed(1)} km`);
   }
-  if (typeof day.segments_total_duration_hours === 'number') {
-    parts.push(`${day.segments_total_duration_hours.toFixed(1)} h`);
+  if (hours && hours > 0) {
+    parts.push(`${hours.toFixed(1)} h`);
   }
   return parts.join(' • ');
 }

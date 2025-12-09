@@ -104,6 +104,11 @@ class ItineraryStopResponse(BaseModel):
     polyline: Optional[List[tuple[float, float]]] = None
 
 
+class ItineraryLocationResponse(BaseModel):
+    location_short: Optional[str] = None
+    location_full: Optional[str] = None
+
+
 class ItineraryDayResponse(BaseModel):
     day_index: int
     date_iso: str
@@ -112,6 +117,7 @@ class ItineraryDayResponse(BaseModel):
     segments_total_duration_hours: float
     location_short: Optional[str] = None
     location_full: Optional[str] = None
+    locations: List[ItineraryLocationResponse] = []
     stops: List[ItineraryStopResponse]
 
 
@@ -256,6 +262,13 @@ async def itinerary(book_id: str):
                 segments_total_duration_hours=d.segments_total_duration_hours,
                 location_short=d.location_short,
                 location_full=d.location_full,
+                locations=[
+                    ItineraryLocationResponse(
+                        location_short=loc.location_short,
+                        location_full=loc.location_full,
+                    )
+                    for loc in (d.locations or [])
+                ],
                 stops=[
                     ItineraryStopResponse(
                         segment_index=s.segment_index,

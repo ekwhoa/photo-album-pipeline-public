@@ -123,6 +123,7 @@ export interface ItineraryDay {
   segments_total_duration_hours: number;
   location_short: string | null;
   location_full: string | null;
+  locations?: ItineraryLocation[];
   stops: ItineraryStop[];
 }
 

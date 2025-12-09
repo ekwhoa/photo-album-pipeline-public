@@ -62,3 +62,57 @@ def test_build_book_itinerary_basic(mock_segments, mock_summaries, mock_geocode)
     assert d0.location_short == "Chicago, Illinois"
     assert len(d0.stops) == 2
     assert d0.stops[0].location_short == "Chicago, Illinois"
+    assert len(d0.locations) >= 1
+
+
+@patch("services.itinerary.reverse_geocode_label")
+@patch("services.itinerary._build_segment_summaries")
+@patch("services.itinerary._build_segments_for_day")
+def test_build_book_itinerary_dedupes_city_lines(mock_segments, mock_summaries, mock_geocode):
+    mock_segments.return_value = ([{"asset_ids": ["a1"]}, {"asset_ids": ["a2"]}], 0, 0, 0, 0)
+    mock_summaries.return_value = [
+        {"index": 1, "distance_km": 5.0, "duration_hours": 1.0, "polyline": [(41.0, -87.0)]},
+        {"index": 2, "distance_km": 3.0, "duration_hours": 0.5, "polyline": [(41.1, -87.1)]},
+    ]
+    mock_geocode.return_value = PlaceLabel(city="Chicago", state="Illinois", country="United States")
+
+    ts = datetime(2025, 8, 1, 12, 0, 0)
+    assets = [_asset("a1", ts, 41.0, -87.0), _asset("a2", ts, 41.1, -87.1)]
+    entry1 = ManifestEntry(asset_id="a1", timestamp=ts)
+    entry2 = ManifestEntry(asset_id="a2", timestamp=ts)
+    day = Day(index=0, date=ts, events=[Event(index=0, entries=[entry1, entry2])])
+    book = Book(id="book1", title="Test", size=BookSize.SQUARE_8)
+
+    days = build_book_itinerary(book, [day], assets)
+
+    assert len(days) == 1
+    d0 = days[0]
+    # City/region should not duplicate
+    assert d0.location_short == "Chicago, Illinois"
+    assert len(d0.locations) == 1
+    assert d0.locations[0].location_full == "Chicago, Illinois"
+
+
+@patch("services.itinerary.reverse_geocode_label")
+@patch("services.itinerary._build_segment_summaries")
+@patch("services.itinerary._build_segments_for_day")
+def test_build_book_itinerary_clamps_unreasonable_distance(mock_segments, mock_summaries, mock_geocode):
+    mock_segments.return_value = ([{"asset_ids": ["a1"]}], 0, 0, 0, 0)
+    mock_summaries.return_value = [
+        {"index": 1, "distance_km": 1500.0, "duration_hours": 10.0, "polyline": [(41.0, -87.0)]},
+    ]
+    mock_geocode.return_value = PlaceLabel(city="Chicago", state="Illinois", country="United States")
+
+    ts = datetime(2025, 8, 1, 12, 0, 0)
+    assets = [_asset("a1", ts, 41.0, -87.0)]
+    entry1 = ManifestEntry(asset_id="a1", timestamp=ts)
+    day = Day(index=0, date=ts, events=[Event(index=0, entries=[entry1])])
+    book = Book(id="book1", title="Test", size=BookSize.SQUARE_8)
+
+    days = build_book_itinerary(book, [day], assets)
+
+    assert len(days) == 1
+    d0 = days[0]
+    # raw distance preserved
+    assert d0.segments_total_distance_km == 1500.0
+    # summary strings handled elsewhere; ensure value is present

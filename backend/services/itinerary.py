@@ -10,8 +10,13 @@ from domain.models import (
     ItineraryDay,
     ItineraryStop,
 )
+import os
 from services.geocoding import compute_centroid, reverse_geocode_label
+from domain.models import ItineraryLocation
 from services.book_planner import _build_segments_for_day, _build_segment_summaries
+
+
+ITINERARY_MAX_KM_PER_DAY = float(os.getenv("ITINERARY_MAX_KM_PER_DAY", "800"))
 
 
 def _label_from_polyline(polyline: Optional[List[Tuple[float, float]]]) -> Tuple[Optional[str], Optional[str]]:
@@ -28,6 +33,58 @@ def _label_from_polyline(polyline: Optional[List[Tuple[float, float]]]) -> Tuple
     full_parts = [p for p in (place.city, place.state, place.country) if p]
     full = ", ".join(full_parts) if full_parts else None
     return short, full
+
+
+def _build_day_location_lines(stops: List[ItineraryStop]) -> List[str]:
+    """
+    Collapse raw PlaceLabel data for a day's stops into a small, ordered list of
+    human-friendly lines, with minimal duplication.
+    """
+    lines: List[str] = []
+    seen_keys: set[str] = set()
+    for stop in stops:
+        candidates = [stop.location_full, stop.location_short]
+        for label in candidates:
+            key = _normalize_location_key(label)
+            if key and key not in seen_keys and label:
+                seen_keys.add(key)
+                lines.append(label)
+    # TODO: later, incorporate neighborhood / POI tiers here.
+    return lines
+
+
+def _truncate_label_to_two_parts(label: str) -> str:
+    """
+    For display only: truncate a comma-separated place label to at most
+    two parts (e.g., "Chicago, Illinois, United States" -> "Chicago, Illinois").
+    """
+    parts = [p.strip() for p in label.split(",") if p.strip()]
+    if len(parts) <= 2:
+        return ", ".join(parts)
+    return ", ".join(parts[:2])
+
+
+def _normalize_location_key(label: Optional[str]) -> str:
+    """
+    Normalize a human-readable label into a key just for grouping/dedup.
+    We DO NOT change the display label, we only group similar strings.
+    """
+    if not label:
+        return ""
+    parts = [p.strip().lower() for p in label.split(",") if p.strip()]
+    if not parts:
+        return ""
+    if len(parts) >= 2:
+        return f"{parts[0]}, {parts[1]}"
+    return parts[0]
+
+
+def _is_reasonable_day_distance_km(total_km: Optional[float]) -> bool:
+    if total_km is None:
+        return False
+    if total_km < 0:
+        return False
+    return total_km <= ITINERARY_MAX_KM_PER_DAY
 
 
 def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> List[ItineraryDay]:
@@ -52,9 +109,17 @@ def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> Li
         summaries = _build_segment_summaries(segments_raw, asset_lookup)
 
         stops: List[ItineraryStop] = []
+        day_locations: List[ItineraryLocation] = []
+        seen_keys: set[str] = set()
+
         for summary in summaries:
             polyline = summary.get("polyline")
             short, full = _label_from_polyline(polyline)
+            display_label = None
+            if full:
+                display_label = _truncate_label_to_two_parts(full)
+            elif short:
+                display_label = _truncate_label_to_two_parts(short)
             stops.append(
                 ItineraryStop(
                     segment_index=summary.get("index", len(stops) + 1),
@@ -65,6 +130,15 @@ def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> Li
                     polyline=polyline,
                 )
             )
+            key = _normalize_location_key(display_label or short or full)
+            if key and key not in seen_keys and display_label:
+                seen_keys.add(key)
+                day_locations.append(
+                    ItineraryLocation(
+                        location_short=display_label,
+                        location_full=display_label,
+                    )
+                )
 
         total_distance = sum(stop.distance_km for stop in stops)
         total_duration = sum(stop.duration_hours for stop in stops)
@@ -75,8 +149,23 @@ def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> Li
             if stop.polyline:
                 all_points.extend(stop.polyline)
         day_short, day_full = _label_from_polyline(all_points) if all_points else (None, None)
+        if day_short:
+            day_short = _truncate_label_to_two_parts(day_short)
+        if day_full:
+            day_full = _truncate_label_to_two_parts(day_full)
+        location_lines = _build_day_location_lines(stops)
+        if location_lines:
+            # Use first distinct label as primary short; second as full when available
+            day_short = day_short or location_lines[0]
+            if len(location_lines) > 1:
+                day_full = day_full or location_lines[1]
+        itinerary_locations = day_locations or [
+            ItineraryLocation(location_short=None, location_full=line) for line in location_lines
+        ]
 
         date_iso = day.date.date().isoformat() if day.date else ""
+
+        display_distance = total_distance if _is_reasonable_day_distance_km(total_distance) else None
         itinerary_days.append(
             ItineraryDay(
                 day_index=(day.index + 1) if day.index is not None else (idx_day + 1),
@@ -86,6 +175,7 @@ def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> Li
                 segments_total_duration_hours=total_duration,
                 location_short=day_short,
                 location_full=day_full,
+                locations=itinerary_locations,
                 stops=stops,
             )
         )
