@@ -6,9 +6,11 @@ Focuses on the dominant trip cluster and exaggerates skinny routes.
 """
 import os
 import math
+import sqlite3
 import threading
 import time
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 from statistics import median
 from typing import List, Tuple, Sequence, Optional, Any
@@ -37,6 +39,12 @@ if MAP_TILE_REFERER:
 _TILE_SESSION = requests.Session()
 _TILE_LOCK = threading.Lock()
 _LAST_TILE_TS = 0.0
+MAP_TILE_CACHE_PATH = Path(
+    os.getenv("MAP_TILE_CACHE_PATH", str(BASE_DIR / "tile_cache.sqlite"))
+)
+MAP_TILE_CACHE_TTL_SECONDS = int(os.getenv("MAP_TILE_CACHE_TTL_SECONDS", str(30 * 24 * 3600)))
+_CACHE_DB_LOCK = threading.Lock()
+_CACHE_DB: Optional[sqlite3.Connection] = None
 
 # Directories
 DATA_DIR = BASE_DIR / "data"
@@ -91,6 +99,64 @@ def render_day_route_map(book_id: str, segments: Sequence[dict]) -> Tuple[str, s
     return render_day_route_image(book_id, segments, width=900, height=300, filename_prefix="day_route")
 
 
+def _get_tile_db() -> sqlite3.Connection:
+    """Lazily open the tile cache DB and ensure schema exists."""
+    global _CACHE_DB
+    with _CACHE_DB_LOCK:
+        if _CACHE_DB is None:
+            MAP_TILE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _CACHE_DB = sqlite3.connect(str(MAP_TILE_CACHE_PATH))
+            _CACHE_DB.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tiles (
+                    z INTEGER,
+                    x INTEGER,
+                    y INTEGER,
+                    fetched_at INTEGER,
+                    data BLOB,
+                    PRIMARY KEY (z, x, y)
+                )
+                """
+            )
+            _CACHE_DB.commit()
+        return _CACHE_DB
+
+
+def _get_tile_from_cache(z: int, x: int, y: int) -> Optional[bytes]:
+    """Fetch tile bytes from SQLite cache if present and not expired."""
+    try:
+        db = _get_tile_db()
+        cur = db.execute(
+            "SELECT fetched_at, data FROM tiles WHERE z=? AND x=? AND y=?",
+            (z, x, y),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        fetched_at, data = row
+        if MAP_TILE_CACHE_TTL_SECONDS > 0:
+            age = time.time() - (fetched_at or 0)
+            if age > MAP_TILE_CACHE_TTL_SECONDS:
+                return None
+        return data
+    except Exception as exc:
+        print(f"[MAP] Tile cache read failed for {z}/{x}/{y}: {exc}")
+        return None
+
+
+def _store_tile_in_cache(z: int, x: int, y: int, data: bytes) -> None:
+    """Store tile bytes in SQLite cache."""
+    try:
+        db = _get_tile_db()
+        db.execute(
+            "INSERT OR REPLACE INTO tiles (z, x, y, fetched_at, data) VALUES (?, ?, ?, ?, ?)",
+            (z, x, y, int(time.time()), data),
+        )
+        db.commit()
+    except Exception as exc:
+        print(f"[MAP] Tile cache write failed for {z}/{x}/{y}: {exc}")
+
+
 def _fetch_tile_http(z: int, x: int, y: int) -> Optional[Image.Image]:
     """
     Fetch a single tile via HTTP with rate limiting.
@@ -130,7 +196,25 @@ def _fetch_tile_http(z: int, x: int, y: int) -> Optional[Image.Image]:
 @lru_cache(maxsize=512)
 def _fetch_tile_cached(z: int, x: int, y: int) -> Optional[Image.Image]:
     """Cached tile fetch; wraps the throttled HTTP helper."""
-    return _fetch_tile_http(z, x, y)
+    cached_bytes = _get_tile_from_cache(z, x, y)
+    if cached_bytes:
+        try:
+            print(f"[MAP] tile cache hit {z}/{x}/{y}")
+            return Image.open(BytesIO(cached_bytes)).convert("RGB")
+        except Exception as exc:
+            print(f"[MAP] Tile cache decode failed for {z}/{x}/{y}: {exc}")
+    else:
+        print(f"[MAP] tile cache miss {z}/{x}/{y}")
+
+    img = _fetch_tile_http(z, x, y)
+    if img is not None:
+        try:
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            _store_tile_in_cache(z, x, y, buf.getvalue())
+        except Exception as exc:
+            print(f"[MAP] Tile cache store failed for {z}/{x}/{y}: {exc}")
+    return img
 
 
 def _latlon_to_tile_xy(lat: float, lon: float, zoom: int) -> Tuple[float, float]:
