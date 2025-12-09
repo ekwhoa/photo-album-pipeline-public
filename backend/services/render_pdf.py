@@ -832,10 +832,25 @@ def _render_day_intro(
         total_hours,
         total_km,
     )
+    segments = getattr(layout, "segments", []) or []
+    travel_count = 0
+    local_count = 0
+    for seg in segments:
+        try:
+            kind = seg.get("kind")
+            if kind == "travel":
+                travel_count += 1
+            elif kind == "local":
+                local_count += 1
+        except Exception:
+            continue
+
     tagline_ctx = DayIntroContext(
         photos_count=getattr(layout, "photos_count", 0) or 0,
         segments_total_distance_km=total_km,
         segment_count=segment_count,
+        travel_segments_count=travel_count,
+        local_segments_count=local_count,
     )
     tagline = build_day_intro_tagline(tagline_ctx)
     segment_lines: List[str] = []

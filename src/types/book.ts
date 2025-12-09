@@ -113,6 +113,8 @@ export interface ItineraryStop {
   location_short: string | null;
   location_full: string | null;
   polyline: [number, number][] | null;
+  kind?: 'travel' | 'local' | 'other' | null;
+  time_bucket?: string | null;
 }
 
 export interface ItineraryDay {

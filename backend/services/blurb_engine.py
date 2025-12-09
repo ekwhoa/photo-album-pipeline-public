@@ -15,6 +15,8 @@ class DayIntroContext:
     photos_count: int
     segments_total_distance_km: Optional[float] = None
     segment_count: Optional[int] = None
+    travel_segments_count: int = 0
+    local_segments_count: int = 0
 
 
 def _round_distance_km(distance: float, base: int = 10) -> int:
@@ -60,6 +62,9 @@ def build_day_intro_tagline(ctx: DayIntroContext) -> Optional[str]:
     distance = ctx.segments_total_distance_km or 0.0
     segment_count = ctx.segment_count or 0
     photos = ctx.photos_count
+    travel_segments = ctx.travel_segments_count or 0
+    local_segments = ctx.local_segments_count or 0
+    is_travel_heavy = travel_segments > 0 and travel_segments >= local_segments and distance > 100
 
     # If we truly have no movement data and no photos, bail out
     if segment_count <= 0 and distance < 0.1 and photos <= 0:
@@ -71,6 +76,9 @@ def build_day_intro_tagline(ctx: DayIntroContext) -> Optional[str]:
         base = "Big travel day"
         detail = f"covering about {rounded_km} km"
         return f"{base} {detail}"
+
+    if is_travel_heavy:
+        return f"Travel day with {travel_segments} segment(s) covering about {rounded_km} km"
 
     if distance >= 15:
         base = "Covering some ground"

@@ -727,6 +727,46 @@ export default function BookDetailPage() {
                                 </div>
                               );
                             })()}
+
+                            {day.stops && day.stops.length > 0 && (
+                              <div className="mt-3 space-y-1">
+                                {day.stops.map((stop) => {
+                                  const label =
+                                    stop.location_short || stop.location_full || `Segment ${stop.segment_index}`;
+                                  const pillText =
+                                    stop.kind === 'travel'
+                                      ? 'Travel segment'
+                                      : stop.kind === 'local'
+                                      ? 'Local exploring'
+                                      : null;
+                                  return (
+                                    <div
+                                      key={`${day.day_index}-${stop.segment_index}`}
+                                      className="flex flex-col gap-1 rounded-md border bg-background/70 px-2 py-1 text-xs text-muted-foreground"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-foreground font-medium">{label}</span>
+                                          {pillText && (
+                                            <span className="rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                              {pillText}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {typeof stop.distance_km === 'number' && (
+                                            <span>~{stop.distance_km.toFixed(1)} km</span>
+                                          )}
+                                          {typeof stop.duration_hours === 'number' && (
+                                            <span>{stop.duration_hours.toFixed(1)} h</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

@@ -28,3 +28,24 @@ def test_day_intro_tagline_formats_numbers():
     ctx = DayIntroContext(photos_count=2, segment_count=2, segments_total_distance_km=12.0)
     line = build_day_intro_tagline(ctx) or ""
     assert "0.0" not in line
+
+
+def test_day_intro_tagline_travel_vs_local():
+    travel_ctx = DayIntroContext(
+        photos_count=5,
+        segment_count=2,
+        segments_total_distance_km=120.0,
+        travel_segments_count=2,
+        local_segments_count=0,
+    )
+    local_ctx = DayIntroContext(
+        photos_count=5,
+        segment_count=2,
+        segments_total_distance_km=5.0,
+        travel_segments_count=0,
+        local_segments_count=2,
+    )
+    travel_line = build_day_intro_tagline(travel_ctx) or ""
+    local_line = build_day_intro_tagline(local_ctx) or ""
+    assert "Travel" in travel_line or "travel" in travel_line
+    assert "Exploring" in local_line or "exploring" in local_line
