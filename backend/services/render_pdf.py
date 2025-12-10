@@ -442,23 +442,17 @@ def _render_itinerary_page(
             stats_parts.append(hours_txt)
         stats_line = " • ".join(stats_parts)
 
-        locations_html = ""
         locations = getattr(day, "locations", None) or []
+        location_labels: List[str] = []
         if locations:
-            loc_lines = []
             for loc in locations:
                 label = getattr(loc, "location_short", None) or getattr(
                     loc, "location_full", None
                 )
                 if not label:
                     continue
-                loc_lines.append(
-                    f'<div class="itinerary-location-line">{label}</div>'
-                )
-            if loc_lines:
-                locations_html = (
-                    f'<div class="itinerary-day-locations">{"".join(loc_lines)}</div>'
-                )
+                location_labels.append(label)
+        location_line = " • ".join(location_labels) if location_labels else ""
 
         stops_html = ""
         stops = getattr(day, "stops", None) or []
@@ -473,21 +467,21 @@ def _render_itinerary_page(
                     stop_parts.append(dur)
                 if dist:
                     stop_parts.append(dist)
-                metrics = f" • {' • '.join(stop_parts)}" if stop_parts else ""
+                metrics = " • ".join(stop_parts)
                 rows.append(
-                    f'<div class="itinerary-stop-row"><span class="itinerary-stop-kind">{kind_label}</span><span class="itinerary-stop-metrics">{metrics}</span></div>'
+                    f'<li class="itinerary-stop"><span class="itinerary-stop-kind">{kind_label}</span>{f"<span class=\"itinerary-stop-meta\"> • {metrics}</span>" if metrics else ""}</li>'
                 )
             if rows:
-                stops_html = f'<div class="itinerary-day-stops">{"".join(rows)}</div>'
+                stops_html = f'<ul class="itinerary-stops">{"".join(rows)}</ul>'
 
         day_blocks.append(
             f"""
         <div class="itinerary-day">
             <div class="itinerary-day-header">
                 <div class="itinerary-day-title">Day {getattr(day, 'day_index', '')} — {fmt_date(getattr(day, 'date_iso', '') or '')}</div>
+                {f'<div class="itinerary-day-location">{location_line}</div>' if location_line else ''}
                 <div class="itinerary-day-stats">{stats_line}</div>
             </div>
-            {locations_html}
             {stops_html}
         </div>
         """
@@ -504,37 +498,37 @@ def _render_itinerary_page(
         page-break-after: always;
     ">
         <style>
-            .itinerary-section {{
+            .itinerary {{
                 padding: 2.5rem 2.75rem;
                 font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }}
-            .itinerary-header h1 {{
-                font-size: 1.4rem;
-                letter-spacing: 0.04em;
-                margin: 0 0 0.25rem 0;
-            }}
-            .itinerary-subtitle {{
-                font-size: 0.75rem;
-                color: #777;
-                margin: 0 0 1.25rem 0;
+            .itinerary-title {{
+                font-size: 1.6rem;
+                font-weight: 700;
+                margin: 0 0 0.75rem 0;
             }}
             .itinerary-day {{
-                padding: 0.75rem 0;
+                margin-bottom: 0.75rem;
                 border-top: 1px solid #eee;
+                padding-top: 0.6rem;
             }}
             .itinerary-day-header {{
-                display: flex;
-                justify-content: space-between;
-                font-size: 0.8rem;
                 margin-bottom: 0.25rem;
             }}
             .itinerary-day-title {{
-                font-weight: 500;
+                font-weight: 600;
+                font-size: 0.95rem;
+            }}
+            .itinerary-day-location {{
+                font-size: 0.9rem;
+                color: #555;
             }}
             .itinerary-day-stats {{
-                color: #555;
-                white-space: nowrap;
-                font-size: 0.75rem;
+                font-size: 0.85rem;
+                color: #444;
+            }}
+            .itinerary-day-stats span + span {{
+                margin-left: 0.25rem;
             }}
             .itinerary-day-locations {{
                 font-size: 0.75rem;
@@ -543,19 +537,23 @@ def _render_itinerary_page(
             .itinerary-location-line + .itinerary-location-line {{
                 margin-top: 0.1rem;
             }}
-            .itinerary-day-stops {{
-                margin-top: 0.15rem;
-                font-size: 0.7rem;
-                color: #555;
+            .itinerary-stops {{
+                list-style: none;
+                padding-left: 0;
+                margin: 0.2rem 0 0 0;
             }}
-            .itinerary-stop-row + .itinerary-stop-row {{
-                margin-top: 0.05rem;
+            .itinerary-stop {{
+                font-size: 0.85rem;
+                color: #444;
+            }}
+            .itinerary-stop + .itinerary-stop {{
+                margin-top: 0.1rem;
             }}
             .itinerary-stop-kind {{
                 font-weight: 500;
             }}
-            .itinerary-stop-metrics {{
-                margin-left: 0.25rem;
+            .itinerary-stop-meta {{
+                margin-left: 0.2rem;
             }}
             .segment-highlight-label {{
                 font-size: 0.8rem;
@@ -564,11 +562,8 @@ def _render_itinerary_page(
                 color: #444;
             }}
         </style>
-        <section class="itinerary-section">
-            <div class="itinerary-header">
-                <h1>Itinerary (beta)</h1>
-                <p class="itinerary-subtitle">Simple day-by-day stops derived from segments.</p>
-            </div>
+        <section class="itinerary">
+            <h1 class="itinerary-title">Trip Itinerary</h1>
             {''.join(day_blocks)}
         </section>
     </div>
