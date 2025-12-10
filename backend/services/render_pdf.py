@@ -306,9 +306,26 @@ def _generate_book_html(
     theme = context.theme
     width_mm = context.page_width_mm
     height_mm = context.page_height_mm
-    
+
     pages_html = []
-    for layout in layouts:
+    def _layout_has_photos(layout: PageLayout) -> bool:
+        elements = getattr(layout, "elements", None) or []
+        asset_elems = [e for e in elements if getattr(e, "asset_id", None)]
+        payload = getattr(layout, "payload", None)
+        payload_assets = []
+        if isinstance(payload, dict):
+            aids = payload.get("asset_ids") or []
+            if isinstance(aids, list):
+                payload_assets = aids
+        return len(asset_elems) > 0 or len(payload_assets) > 0
+
+    for idx, layout in enumerate(layouts):
+        logger.info("[render_pdf] Rendering page %s: page_type=%s", idx, layout.page_type)
+        if layout.page_type in (PageType.PHOTO_GRID, PageType.PHOTO_SPREAD) and not _layout_has_photos(layout):
+            logger.warning(
+                "[render_pdf] Skipping empty photo page index=%s type=%s", idx, layout.page_type
+            )
+            continue
         logger.debug(
             "[render_pdf] page index=%s type=%s hero=%s assets=%s layout_variant=%s",
             layout.page_index,
@@ -964,10 +981,20 @@ def _render_day_intro(
         local_segments_count=local_count,
     )
     tagline = build_day_intro_tagline(tagline_ctx)
-    segment_lines: List[str] = []
+    segment_items: List[str] = []
     for idx, seg in enumerate(getattr(layout, "segments", []) or []):
         try:
-            segment_lines.append(format_segment_line(idx + 1, seg))
+            parts: List[str] = []
+            dur_val = seg.get("duration_hours") if isinstance(seg, dict) else None
+            dist_val = seg.get("distance_km") if isinstance(seg, dict) else None
+            if isinstance(dur_val, (int, float)) and dur_val > 0:
+                parts.append(f"{dur_val:.1f} h")
+            if isinstance(dist_val, (int, float)) and dist_val > 0:
+                parts.append(f"~{dist_val:.1f} km")
+            meta = " • ".join(parts)
+            segment_items.append(
+                f'<li class="day-intro-segment"><span class="day-intro-segment-label">Segment {idx + 1}</span>{f"<span class=\"day-intro-segment-meta\"> • {meta}</span>" if meta else ""}</li>'
+            )
         except Exception:
             continue
     location_label = _location_label_for_segments(getattr(layout, "segments", None) or [])
@@ -1004,10 +1031,8 @@ def _render_day_intro(
     stats_line = " • ".join([p for p in stats_parts if p])
 
     segment_list_html = (
-        f'<ul class="day-intro-segments">'
-        + "".join([f"<li>{line}</li>" for line in segment_lines])
-        + "</ul>"
-        if segment_lines
+        f'<ul class="day-intro-segments">' + "".join(segment_items) + "</ul>"
+        if segment_items
         else ""
     )
 
@@ -1031,7 +1056,7 @@ def _render_day_intro(
                 gap: 10px;
             }}
             .day-intro-header {{
-                margin-bottom: 4px;
+                margin-bottom: 0.75rem;
             }}
             .day-intro-title {{
                 font-size: 24pt;
@@ -1042,23 +1067,20 @@ def _render_day_intro(
             .day-intro-subtitle {{
                 font-size: 12pt;
                 color: {theme.secondary_color};
-                margin: 2px 0 6px 0;
+                margin: 4px 0 8px 0;
             }}
             .day-intro-tagline {{
-                margin: 2px 0 8px 0;
+                margin: 2px 0 6px 0;
                 font-size: 12pt;
                 color: {theme.primary_color};
             }}
             .day-intro-stats {{
                 font-size: 11pt;
                 color: {theme.primary_color};
-                margin: 0 0 8px 0;
-            }}
-            .day-intro-stats span + span {{
-                margin-left: 6px;
+                margin: 2px 0 10px 0;
             }}
             .day-intro-map {{
-                margin: 8px 0 12px 0;
+                margin: 10px 0 12px 0;
             }}
             .day-intro-map img {{
                 width: 100%;
@@ -1068,15 +1090,20 @@ def _render_day_intro(
                 display: block;
             }}
             .day-intro-segments {{
-                list-style: disc;
-                list-style-position: outside;
-                margin: 8px 0 0 0;
-                padding-left: 18px;
+                list-style: none;
+                padding-left: 0;
+                margin: 6px 0 0 0;
                 font-size: 10pt;
                 color: {theme.secondary_color};
             }}
-            .day-intro-segments li {{
-                margin: 2px 0;
+            .day-intro-segment + .day-intro-segment {{
+                margin-top: 2px;
+            }}
+            .day-intro-segment-label {{
+                font-weight: 600;
+            }}
+            .day-intro-segment-meta {{
+                margin-left: 4px;
             }}
         </style>
         <div class="day-intro">
@@ -1088,7 +1115,6 @@ def _render_day_intro(
             </div>
             <div class="day-intro-body">
                 {f'<div class=\"day-intro-stats\">{stats_line}</div>' if stats_line else ''}
-                {f'<div class=\"day-intro-stats\">{summary_line}</div>' if (summary_line and summary_line != stats_line) else ''}
                 {f'<div class=\"day-intro-map\"><img src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
                 {segment_list_html}
             </div>

@@ -4,6 +4,7 @@ Book planner service.
 Takes organized days/events and creates a Book structure with
 front cover, trip summary, interior pages, and back cover.
 """
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import date, datetime
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ HOUR_BUCKETS = [
     (11, 16, "Afternoon"),
     (16, 21, "Evening"),
 ]
+
+logger = logging.getLogger(__name__)
 
 # Day layout profile heuristics (controls full-page bias per day)
 @dataclass
@@ -1528,7 +1531,8 @@ def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
     Insert blank pages to enforce layout parity:
     - Day intros should land on a right-hand page (interior index even).
     - Photo spread pairs (same hero) should start on a left-hand page (interior index odd).
-    Starts counting interior pages at the trip_summary page (treated as the first right-hand interior page).
+    Starts counting interior pages at the title_page or trip_summary page
+    (treated as the first right-hand interior page).
     """
     result: List[Page] = []
     interior_started = False
@@ -1540,7 +1544,12 @@ def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
         # Start parity enforcement at trip_summary; before that, just copy pages
         if not interior_started:
             result.append(page)
-            if page.page_type == PageType.TRIP_SUMMARY:
+            if page.page_type == PageType.TITLE_PAGE:
+                # Title page is treated as the first interior (right-hand) page;
+                # the next page should be a left-hand page.
+                interior_started = True
+                interior_idx = 0
+            elif page.page_type == PageType.TRIP_SUMMARY:
                 interior_started = True
                 # trip_summary consumes the first (right-hand) interior page
                 interior_idx = 1  # next page will be left
@@ -1587,6 +1596,10 @@ def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
     # Reindex pages
     for idx, page in enumerate(result):
         page.index = idx
+
+    for idx, page in enumerate(result):
+        if page.page_type == PageType.BLANK:
+            logger.info("Blank page at index %s", idx)
 
     return result
 
