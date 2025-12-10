@@ -276,7 +276,7 @@ class RenderContext:
     def page_width_mm(self) -> float:
         """Page width in millimeters."""
         sizes = {
-            BookSize.SQUARE_8: 203.2,  # 8 inches
+            BookSize.SQUARE_8: 210.0,  # 8.3 inches / 210 mm
             BookSize.SQUARE_10: 254.0,  # 10 inches
             BookSize.PORTRAIT_8X10: 203.2,
             BookSize.LANDSCAPE_10X8: 254.0,
@@ -288,7 +288,7 @@ class RenderContext:
     def page_height_mm(self) -> float:
         """Page height in millimeters."""
         sizes = {
-            BookSize.SQUARE_8: 203.2,
+            BookSize.SQUARE_8: 210.0,
             BookSize.SQUARE_10: 254.0,
             BookSize.PORTRAIT_8X10: 254.0,
             BookSize.LANDSCAPE_10X8: 203.2,
