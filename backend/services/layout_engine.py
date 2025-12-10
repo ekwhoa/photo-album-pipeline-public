@@ -57,6 +57,10 @@ def compute_all_layouts(pages: List[Page], context: RenderContext, book_id: str 
         if isinstance(page.payload, dict):
             layout.segment_id = page.payload.get("segment_id")
             layout.segment_kind = page.payload.get("segment_kind")
+            layout.segment_label = page.payload.get("segment_label")
+            layout.segment_distance_km = page.payload.get("segment_distance_km")
+            layout.segment_duration_hours = page.payload.get("segment_duration_hours")
+            layout.segment_photo_count = page.payload.get("segment_photo_count")
         layouts.append(layout)
     return layouts
 

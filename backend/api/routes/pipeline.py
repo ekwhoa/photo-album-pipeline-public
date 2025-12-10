@@ -39,6 +39,10 @@ class PagePreviewResponse(BaseModel):
     segments_total_distance_km: float | None = None
     segments_total_duration_hours: float | None = None
     segments: List[dict] | None = None
+    segment_label: str | None = None
+    segment_distance_km: float | None = None
+    segment_duration_hours: float | None = None
+    segment_photo_count: int | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -227,6 +231,10 @@ async def get_pages(book_id: str):
                 segments_total_distance_km=segments_total_distance_km,
                 segments_total_duration_hours=segments_total_duration_hours,
                 segments=segments,
+                segment_label=page.payload.get("segment_label"),
+                segment_distance_km=page.payload.get("segment_distance_km"),
+                segment_duration_hours=page.payload.get("segment_duration_hours"),
+                segment_photo_count=page.payload.get("segment_photo_count"),
             ))
         
         return previews

@@ -183,6 +183,12 @@ def _render_photo_grid_from_elements(
 
     bg_color = layout.background_color or theme.background_color
     elements_html = []
+    label_html = ""
+    if (
+        layout.layout_variant == "segment_local_highlight_v1"
+        and getattr(layout, "segment_label", None)
+    ):
+        label_html = f'<div class="segment-highlight-label">{layout.segment_label}</div>'
 
     for elem in layout.elements:
         img_src = ""
@@ -265,6 +271,7 @@ def _render_photo_grid_from_elements(
         color: {theme.primary_color};
         page-break-after: always;
     ">
+        {label_html}
         {''.join(elements_html)}
     </div>
     """
@@ -549,6 +556,12 @@ def _render_itinerary_page(
             }}
             .itinerary-stop-metrics {{
                 margin-left: 0.25rem;
+            }}
+            .segment-highlight-label {{
+                font-size: 0.8rem;
+                font-weight: 600;
+                margin: 12px 12px 4px 12px;
+                color: #444;
             }}
         </style>
         <section class="itinerary-section">

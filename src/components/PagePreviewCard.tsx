@@ -57,6 +57,20 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
   // For spreads, align with backend/PDF parity: first spread page is left, second is right.
   const spreadSlot: 'left' | 'right' = page.index % 2 === 0 ? 'left' : 'right';
+  const segmentLabel = (page as any).segment_label ?? (page as any).segmentLabel ?? null;
+  const segmentStats = useMemo(() => {
+    const stats: string[] = [];
+    if (page.segment_distance_km && page.segment_distance_km > 0) {
+      stats.push(`~${page.segment_distance_km.toFixed(1)} km`);
+    }
+    if (page.segment_duration_hours && page.segment_duration_hours > 0) {
+      stats.push(`${page.segment_duration_hours.toFixed(1)} h`);
+    }
+    if (page.segment_photo_count && page.segment_photo_count > 0) {
+      stats.push(`${page.segment_photo_count} photos`);
+    }
+    return stats.length ? stats.join(' • ') : '';
+  }, [page.segment_distance_km, page.segment_duration_hours, page.segment_photo_count]);
 
   return (
     <Card
@@ -132,9 +146,17 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
             {icon}
             <span className="text-sm font-medium truncate">{label}</span>
           </div>
+          {segmentLabel && (
+            <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">
+              {segmentLabel}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
             {page.summary}
           </p>
+          {segmentStats && (
+            <p className="text-[11px] text-muted-foreground mt-0.5">{segmentStats}</p>
+          )}
         </div>
       </CardContent>
     </Card>

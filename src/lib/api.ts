@@ -40,6 +40,10 @@ export interface PagePreview {
   layout_variant?: 'default' | 'grid_3_hero' | 'grid_4_simple' | 'grid_2up' | 'grid_3up_hero' | 'grid_6_dense' | null;
   segment_id?: string | null;
   segment_kind?: 'local' | 'travel' | string | null;
+  segment_label?: string | null;
+  segment_distance_km?: number | null;
+  segment_duration_hours?: number | null;
+  segment_photo_count?: number | null;
   segment_count?: number;
   segments_total_distance_km?: number;
   segments_total_duration_hours?: number;

@@ -144,6 +144,12 @@ export interface BookPage {
   layout_variant?: GridLayoutVariant | string | null;
   segment_id?: string | null;
   segment_kind?: 'local' | 'travel' | string | null;
+  segment_label?: string | null;
+  segmentLabel?: string | null;
+  segment_distance_km?: number | null;
+  segment_duration_hours?: number | null;
+  segment_photo_count?: number | null;
+  segmentPhotoCount?: number | null;
   segment_count?: number | null;
   segments_total_distance_km?: number | null;
   segments_total_duration_hours?: number | null;

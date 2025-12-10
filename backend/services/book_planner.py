@@ -34,6 +34,12 @@ MIN_DURATION_HOURS_FOR_HIGHLIGHT = 0.5
 MAX_DISTANCE_KM_FOR_LOCAL_HIGHLIGHT = 15.0
 MAX_HIGHLIGHT_PHOTOS = 8
 
+HOUR_BUCKETS = [
+    (5, 11, "Morning"),
+    (11, 16, "Afternoon"),
+    (16, 21, "Evening"),
+]
+
 # Day layout profile heuristics (controls full-page bias per day)
 @dataclass
 class DayLayoutProfile:
@@ -84,6 +90,39 @@ def _select_segment_highlight_photos(asset_ids: List[str]) -> List[str]:
     participate in the normal day grids (duplication is acceptable for now).
     """
     return asset_ids[:MAX_HIGHLIGHT_PHOTOS]
+
+
+def _bucket_time_of_day(dt: Optional[datetime]) -> Optional[str]:
+    """Roughly bucket a datetime into a time-of-day label."""
+    if not dt:
+        return None
+    hour = dt.hour
+    for start, end, label in HOUR_BUCKETS:
+        if start <= hour < end:
+            return label
+    return "Late night"
+
+
+def build_segment_label(
+    *,
+    kind: str,
+    start_dt: Optional[datetime],
+    distance_km: Optional[float],
+    duration_hours: Optional[float],
+    photo_count: int,
+) -> str:
+    """Create a compact label for a highlighted segment."""
+    parts: List[str] = []
+    bucket = _bucket_time_of_day(start_dt)
+    prefix = bucket + " " if bucket else ""
+    parts.append(f"{prefix}{kind.capitalize()} segment".strip())
+    if distance_km and distance_km > 0:
+        parts.append(f"~{distance_km:.1f} km")
+    if duration_hours and duration_hours > 0:
+        parts.append(f"{duration_hours:.1f} h")
+    if photo_count > 0:
+        parts.append(f"{photo_count} {'photo' if photo_count == 1 else 'photos'}")
+    return " • ".join(parts)
 
 
 def plan_book(
@@ -261,6 +300,20 @@ def plan_book(
             selected_highlight_photos = _select_segment_highlight_photos(asset_ids_for_seg)
             if not selected_highlight_photos:
                 continue
+            distance_km = seg_summary.get("distance_km")
+            duration_hours = seg_summary.get("duration_hours")
+            # Use the number of photos that will actually be shown on the page.
+            # The default grid layout we reuse for highlights shows up to `photos_per_page`
+            # images, so clamp to that to keep the label honest.
+            photo_count = min(len(selected_highlight_photos), photos_per_page)
+            start_dt = seg_summary.get("start_time")
+            label = build_segment_label(
+                kind=seg_summary.get("kind") or "local",
+                start_dt=start_dt,
+                distance_km=distance_km,
+                duration_hours=duration_hours,
+                photo_count=photo_count,
+            )
             highlight_seen.add(segment_id)
             interior_pages.append(
                 Page(
@@ -271,6 +324,10 @@ def plan_book(
                         "layout_variant": "segment_local_highlight_v1",
                         "segment_id": segment_id,
                         "segment_kind": seg_summary.get("kind") or "local",
+                        "segment_label": label,
+                        "segment_distance_km": distance_km,
+                        "segment_duration_hours": duration_hours,
+                        "segment_photo_count": photo_count,
                     },
                 )
             )
@@ -1054,17 +1111,20 @@ def _build_segment_summaries(
         distance_km = seg.get("approx_distance_km", 0.0) or 0.0
         kind = _classify_segment_kind(distance_km, duration_hours or 0.0)
         asset_ids = seg.get("asset_ids") or []
+        start_time = seg.get("start_taken_at")
 
         summaries.append(
             {
                 "index": index_offset + idx + 1,  # 1-based
                 "distance_km": distance_km,
                 "duration_hours": duration_hours,
+                "start_time": start_time,
                 "start_label": None,  # placeholder; no reverse geocoding
                 "end_label": None,
                 "polyline": polyline if polyline else None,
                 "asset_ids": asset_ids,
                 "kind": kind,
+                "photo_count": len(asset_ids),
             }
         )
     return summaries

@@ -324,6 +324,10 @@ class PageLayout:
     layout_variant: Optional[str] = None
     segment_id: Optional[str] = None
     segment_kind: Optional[str] = None
+    segment_label: Optional[str] = None
+    segment_distance_km: Optional[float] = None
+    segment_duration_hours: Optional[float] = None
+    segment_photo_count: Optional[int] = None
     # Optional segment metadata for day/map pages
     segment_count: Optional[int] = None
     segments_total_distance_km: Optional[float] = None

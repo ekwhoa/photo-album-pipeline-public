@@ -81,6 +81,20 @@ export function PageDetailModal({
   const heroSrc = heroAsset ? (heroAsset.thumbnail_path ? getThumbnailUrl(heroAsset) : getAssetUrl(heroAsset)) : '';
   // Use layout index parity to decide spread side, matching backend/PDF rendering.
   const spreadSlot: 'left' | 'right' = page.index % 2 === 0 ? 'left' : 'right';
+  const segmentStats = (() => {
+    const parts: string[] = [];
+    if (page.segment_distance_km && page.segment_distance_km > 0) {
+      parts.push(`~${page.segment_distance_km.toFixed(1)} km`);
+    }
+    if (page.segment_duration_hours && page.segment_duration_hours > 0) {
+      parts.push(`${page.segment_duration_hours.toFixed(1)} h`);
+    }
+    if (page.segment_photo_count && page.segment_photo_count > 0) {
+      parts.push(`${page.segment_photo_count} photos`);
+    }
+    return parts.join(' • ');
+  })();
+  const segmentLabel = (page as any).segment_label ?? (page as any).segmentLabel ?? null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -94,10 +108,16 @@ export function PageDetailModal({
                   ? 'Local segment'
                   : page.segment_kind === 'travel'
                   ? 'Travel segment'
-                  : page.segment_kind}
-              </span>
-            )}
-          </DialogTitle>
+              : page.segment_kind}
+            </span>
+          )}
+        </DialogTitle>
+          {segmentLabel && (
+            <p className="text-xs text-muted-foreground mt-1">{segmentLabel}</p>
+          )}
+          {segmentStats && (
+            <p className="text-[11px] text-muted-foreground">{segmentStats}</p>
+          )}
         </DialogHeader>
 
         <div className="mt-4">
