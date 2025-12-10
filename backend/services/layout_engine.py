@@ -53,6 +53,7 @@ def compute_all_layouts(pages: List[Page], context: RenderContext, book_id: str 
         layout = compute_layout(page, context)
         # Attach book_id for downstream consumers (optional)
         layout.book_id = book_id
+        layout.payload = page.payload
         # Propagate segment metadata when present
         if isinstance(page.payload, dict):
             layout.segment_id = page.payload.get("segment_id")
@@ -669,3 +670,15 @@ def layout_trip_summary(page: Page, context: RenderContext) -> PageLayout:
 def layout_itinerary(page: Page, context: RenderContext) -> PageLayout:
     """Placeholder for itinerary layout."""
     raise NotImplementedError("Itinerary layout not yet implemented")
+
+
+@register_layout(PageType.TITLE_PAGE)
+def layout_title_page(page: Page, context: RenderContext) -> PageLayout:
+    """Simple layout shell for a text-only title page."""
+    return PageLayout(
+        page_index=page.index,
+        page_type=page.page_type,
+        background_color=context.theme.background_color,
+        elements=[],
+        payload=page.payload,
+    )

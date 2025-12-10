@@ -164,6 +164,21 @@ def plan_book(
     _, _, exif_subtitle = compute_exif_date_range(assets)
     fallback_subtitle = _generate_subtitle(days) or f"{len(days)} days • {len(assets)} photos"
     cover_subtitle = exif_subtitle or fallback_subtitle
+    date_range_text = exif_subtitle or _generate_subtitle(days)
+    stats_line = fallback_subtitle if fallback_subtitle else None
+
+    # Trip-level stats for title page / summary
+    day_count = len(days)
+    photo_count = len(assets)
+    event_count = sum(len(day.events) for day in days)
+    gps_photo_count, distinct_locations = compute_gps_stats(assets)
+    trip_stats_parts = [f"{day_count} days", f"{photo_count} photos"]
+    if distinct_locations:
+        trip_stats_parts.append(f"{distinct_locations} locations")
+    stats_line_title = " • ".join(trip_stats_parts)
+    # Subtitle reused from trip summary helper (one-sentence blurb)
+    subtitle_exif = compute_exif_date_range(assets)[2]
+    trip_subtitle = subtitle_exif or f"A {day_count}-day trip with {photo_count} photos"
 
     # Create front cover
     front_cover = Page(
@@ -173,19 +188,32 @@ def plan_book(
             "title": title,
             "subtitle": cover_subtitle,
             "hero_asset_id": hero_asset_id,
+            "date_range": date_range_text,
+            "stats_line": stats_line,
+        },
+    )
+
+    # Text-only title page (placed after the photo cover)
+    title_page = Page(
+        index=1,
+        page_type=PageType.TITLE_PAGE,
+        payload={
+            "title": title,
+            "subtitle": trip_subtitle,
+            "date_range": date_range_text,
+            "stats_line": stats_line_title,
         },
     )
     
-    # Create trip summary page (index 1)
+    # Create trip summary page (index 2)
     trip_summary = _create_trip_summary_page(
         title=title,
         days=days,
         assets=assets,
-        index=1,
+        index=2,
     )
 
-    # Map route page (optional, index 2)
-    gps_photo_count, distinct_locations = compute_gps_stats(assets)
+    # Map route page (optional, index 3)
     asset_lookup = {a.id: a for a in assets}
     route_points = []
     for asset_id in all_asset_ids:
@@ -193,7 +221,7 @@ def plan_book(
         if asset and asset.metadata and asset.metadata.gps_lat is not None and asset.metadata.gps_lon is not None:
             route_points.append((asset.metadata.gps_lat, asset.metadata.gps_lon))
     map_route_page: Optional[Page] = None
-    interior_start_index = 2
+    interior_start_index = 3
     route_image_rel = ""
     route_image_abs = ""
     if gps_photo_count > 0 and route_points:
@@ -201,7 +229,7 @@ def plan_book(
 
     if gps_photo_count > 0:
         map_route_page = Page(
-            index=2,
+            index=3,
             page_type=PageType.MAP_ROUTE,
             payload={
                 "gps_photo_count": gps_photo_count,
@@ -210,7 +238,7 @@ def plan_book(
                 "route_image_abs_path": route_image_abs,
             },
         )
-        interior_start_index = 3
+        interior_start_index = 4
     
     # Deduplicate near-identical shots per day (order preserved)
     deduped_ids, dedup_summary = _dedupe_assets_by_day(all_asset_ids, asset_lookup)
@@ -384,7 +412,7 @@ def plan_book(
             )
 
     # Combine trip summary + optional map route + photo grids
-    all_interior_pages = [trip_summary]
+    all_interior_pages = [title_page, trip_summary]
     if map_route_page:
         # Inject segment summaries into map route payload
         payload = map_route_page.payload or {}

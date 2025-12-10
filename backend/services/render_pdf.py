@@ -840,6 +840,87 @@ def _render_trip_summary_card(
     """
 
 
+def _render_title_page(
+    layout: PageLayout,
+    theme: Theme,
+    width_mm: float,
+    height_mm: float,
+) -> str:
+    """Render a minimal, text-centric title page."""
+    bg_color = layout.background_color or theme.background_color
+
+    payload = getattr(layout, "payload", None)
+    if isinstance(payload, dict):
+        data = payload
+    else:
+        data = {
+            "title": getattr(layout, "title", ""),
+            "subtitle": getattr(layout, "subtitle", ""),
+            "date_range": getattr(layout, "date_range", ""),
+            "stats_line": getattr(layout, "stats_line", ""),
+        }
+
+    title = data.get("title", "") or ""
+    subtitle = data.get("subtitle", "") or ""
+    date_range = data.get("date_range", "") or ""
+    stats_line = data.get("stats_line", "") or ""
+
+    return f"""
+    <div class="page front-cover-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: {bg_color};
+        font-family: {theme.font_family};
+        color: {theme.primary_color};
+        page-break-after: always;
+    ">
+        <style>
+            .front-cover {{
+                min-height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                padding: 20mm;
+            }}
+            .front-cover-content {{
+                max-width: 170mm;
+                margin: 0 auto;
+            }}
+            .front-cover-title {{
+                font-family: {theme.title_font_family};
+                font-size: 26pt;
+                margin: 0;
+            }}
+            .front-cover-dates {{
+                margin-top: 6px;
+                font-size: 12pt;
+                color: #374151;
+            }}
+            .front-cover-subtitle {{
+                margin-top: 10px;
+                font-size: 11pt;
+                color: #4b5563;
+            }}
+            .front-cover-stats {{
+                margin-top: 10px;
+                font-size: 10pt;
+                color: #555;
+            }}
+        </style>
+        <section class="front-cover">
+            <div class="front-cover-content">
+                {f'<h1 class="front-cover-title">{title}</h1>' if title else ''}
+                {f'<div class="front-cover-dates">{date_range}</div>' if date_range else ''}
+                {f'<p class="front-cover-subtitle">{subtitle}</p>' if subtitle else ''}
+                {f'<div class="front-cover-stats">{stats_line}</div>' if stats_line else ''}
+            </div>
+        </section>
+    </div>
+    """
+
+
 def _render_day_intro(
     layout: PageLayout,
     theme: Theme,
@@ -1155,6 +1236,8 @@ def _render_page_html(
     media_base_url: str | None = None,
 ) -> str:
     """Render a single page to HTML."""
+    if layout.page_type == PageType.TITLE_PAGE:
+        return _render_title_page(layout, theme, width_mm, height_mm)
     if layout.page_type == PageType.BLANK:
         return _render_blank_page(theme, width_mm, height_mm)
     if layout.page_type == PageType.MAP_ROUTE:

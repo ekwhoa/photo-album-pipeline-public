@@ -42,6 +42,7 @@ class PageType(str, Enum):
     """
     # Currently implemented
     FRONT_COVER = "front_cover"
+    TITLE_PAGE = "title_page"
     BLANK = "blank"
     PHOTO_GRID = "photo_grid"
     BACK_COVER = "back_cover"
@@ -328,6 +329,7 @@ class PageLayout:
     segment_distance_km: Optional[float] = None
     segment_duration_hours: Optional[float] = None
     segment_photo_count: Optional[int] = None
+    payload: Optional[Dict[str, Any]] = None
     # Optional segment metadata for day/map pages
     segment_count: Optional[int] = None
     segments_total_distance_km: Optional[float] = None
