@@ -9,6 +9,21 @@ from domain.models import Book, BookSize, Page, PageType
 from repositories.models import BookORM
 
 
+def _make_json_safe(value):
+    """Recursively convert any datetime/date objects to ISO strings."""
+    from datetime import date, datetime
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _make_json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_make_json_safe(v) for v in value]
+    return value
+
+
 def _page_from_dict(data: dict) -> Page:
     return Page(
         index=data.get("index", 0),
@@ -18,7 +33,7 @@ def _page_from_dict(data: dict) -> Page:
 
 
 def _page_to_dict(page: Page) -> dict:
-    return page.to_dict()
+    return _make_json_safe(page.to_dict())
 
 
 def _book_from_orm(orm: BookORM) -> Book:

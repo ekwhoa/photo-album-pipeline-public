@@ -306,7 +306,15 @@ def plan_book(
             # The default grid layout we reuse for highlights shows up to `photos_per_page`
             # images, so clamp to that to keep the label honest.
             photo_count = min(len(selected_highlight_photos), photos_per_page)
-            start_dt = seg_summary.get("start_time")
+            start_val = seg_summary.get("start_time")
+            start_dt = None
+            if isinstance(start_val, datetime):
+                start_dt = start_val
+            elif isinstance(start_val, str):
+                try:
+                    start_dt = datetime.fromisoformat(start_val)
+                except Exception:
+                    start_dt = None
             label = build_segment_label(
                 kind=seg_summary.get("kind") or "local",
                 start_dt=start_dt,
@@ -1112,13 +1120,14 @@ def _build_segment_summaries(
         kind = _classify_segment_kind(distance_km, duration_hours or 0.0)
         asset_ids = seg.get("asset_ids") or []
         start_time = seg.get("start_taken_at")
+        start_time_iso = start_time.isoformat() if start_time else None
 
         summaries.append(
             {
                 "index": index_offset + idx + 1,  # 1-based
                 "distance_km": distance_km,
                 "duration_hours": duration_hours,
-                "start_time": start_time,
+                "start_time": start_time_iso,
                 "start_label": None,  # placeholder; no reverse geocoding
                 "end_label": None,
                 "polyline": polyline if polyline else None,

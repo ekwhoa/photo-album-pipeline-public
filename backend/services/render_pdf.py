@@ -589,7 +589,7 @@ def _render_map_route_card(
 
     image_src = ""
     title = "Trip route"
-    stats_lines: List[str] = []
+    subtitle_parts: List[str] = []
 
     for elem in layout.elements:
         if (elem.image_path or elem.image_url) and not image_src:
@@ -598,13 +598,12 @@ def _render_map_route_card(
             else:
                 image_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
         elif elem.text:
-            # First text element is the title; others become subtitle lines
             if title == "Trip route" and elem.text.lower().startswith("trip route"):
                 title = elem.text
             else:
-                stats_lines.append(elem.text)
+                subtitle_parts.append(elem.text)
 
-    subtitle = " • ".join(stats_lines)
+    subtitle = " • ".join([s for s in subtitle_parts if s.strip()])
 
     segments = getattr(layout, "segments", []) or []
     seg_count = len(segments)
@@ -615,9 +614,9 @@ def _render_map_route_card(
     figure_html = ""
     if image_src:
         figure_html = f"""
-            <figure class="map-route-figure">
+            <div class="trip-route-map">
                 <img src="{image_src}" alt="Trip route map" />
-            </figure>
+            </div>
         """
     else:
         figure_html = """
@@ -641,51 +640,52 @@ def _render_map_route_card(
                 align-items: center;
                 justify-content: flex-start;
             }}
-            .map-route-card {{
-                max-width: 190mm;
+            .trip-route-section {{
                 width: 88%;
-                margin: 18mm auto 18mm;
-                padding: 14mm 12mm;
-                background: #f8fafc;
-                border: 1px solid #d9e2ec;
-                border-radius: 10px;
-                box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
-                display: flex;
-                flex-direction: column;
-                gap: 6mm;
-                align-items: center;
-                text-align: center;
+                max-width: 190mm;
+                margin: 16mm auto;
             }}
-            .map-route-title {{
+            .trip-route-header {{
+                margin-bottom: 8px;
+            }}
+            .trip-route-kicker {{
+                font-size: 0.8rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                margin: 0 0 4px 0;
+            }}
+            .trip-route-title {{
                 font-family: {theme.title_font_family};
-                font-size: 24pt;
-                letter-spacing: 0.2pt;
-                margin: 0;
-                color: {theme.primary_color};
-            }}
-            .map-route-subtitle {{
-                font-size: 12pt;
-                color: {theme.secondary_color};
+                font-size: 22pt;
                 margin: 0;
             }}
-            .map-route-figure {{
-                margin: 0;
-                width: 100%;
+            .trip-route-subtitle {{
+                margin: 4px 0;
+                font-size: 11pt;
+                color: #4b5563;
+            }}
+            .trip-route-stats {{
+                font-size: 10pt;
+                color: #374151;
+            }}
+            .trip-route-stats span + span {{
+                margin-left: 6px;
+            }}
+            .trip-route-map {{
+                margin-top: 12px;
                 background: #0b111c;
                 border-radius: 8px;
                 border: 1px solid #cbd5e1;
-                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
                 padding: 6mm;
-                max-height: 130mm;
-                overflow: hidden;
             }}
-            .map-route-figure img {{
+            .trip-route-map img {{
                 width: 100%;
                 height: auto;
-                max-height: 118mm;
                 display: block;
                 border-radius: 6px;
                 object-fit: contain;
+                max-height: 130mm;
             }}
             .map-route-placeholder {{
                 width: 100%;
@@ -696,19 +696,16 @@ def _render_map_route_card(
                 border: 1px dashed #cbd5e1;
                 font-size: 12pt;
             }}
-            .map-route-segment-summary {{
-                margin: 6px 0 4px 0;
-                font-size: 12pt;
-                color: {theme.primary_color};
-                text-align: center;
-            }}
         </style>
-        <div class="map-route-card">
-            <h1 class="map-route-title">{title}</h1>
-            <p class="map-route-subtitle">{subtitle}</p>
+        <section class="trip-route-section">
+            <header class="trip-route-header">
+                <div class="trip-route-kicker">TRIP ROUTE</div>
+                <h1 class="trip-route-title">{title}</h1>
+                {f'<div class="trip-route-subtitle">{subtitle}</div>' if subtitle else ''}
+                {f'<div class="trip-route-stats"><span>{seg_summary}</span></div>' if seg_summary else ''}
+            </header>
             {figure_html}
-            {f'<div class=\"map-route-segment-summary\">{seg_summary}</div>' if seg_summary else ''}
-        </div>
+        </section>
     </div>
     """
 
@@ -719,7 +716,7 @@ def _render_trip_summary_card(
     width_mm: float,
     height_mm: float,
 ) -> str:
-    """Render trip summary with card styling consistent with map route."""
+    """Render a clean trip summary page with header + stats."""
     bg_color = layout.background_color or theme.background_color
 
     title = "Trip summary"
@@ -786,67 +783,59 @@ def _render_trip_summary_card(
         page-break-after: always;
     ">
         <style>
-            .trip-summary-page {{
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: flex-start;
-            }}
-            .trip-summary-card {{
-                max-width: 190mm;
+            .trip-summary {{
                 width: 88%;
-                margin: 18mm auto 18mm;
-                padding: 14mm 12mm;
-                background: #f8fafc;
-                border: 1px solid #d9e2ec;
-                border-radius: 10px;
-                box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
-                display: flex;
-                flex-direction: column;
-                gap: 6mm;
-                align-items: center;
-                text-align: center;
+                max-width: 190mm;
+                margin: 16mm auto;
+            }}
+            .trip-summary-header {{
+                margin-bottom: 12px;
+            }}
+            .trip-summary-kicker {{
+                font-size: 0.8rem;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+                margin-bottom: 4px;
             }}
             .trip-summary-title {{
                 font-family: {theme.title_font_family};
                 font-size: 24pt;
-                letter-spacing: 0.2pt;
-                margin: 0;
-                color: {theme.primary_color};
-            }}
-            .trip-summary-subtitle {{
-                font-size: 12pt;
-                color: {theme.secondary_color};
                 margin: 0;
             }}
-            .trip-summary-meta {{
-                font-size: 12pt;
-                color: {theme.secondary_color};
-                margin: 4mm 0 0 0;
-            }}
-            .trip-summary-blurb {{
-                font-size: 12pt;
-                color: {theme.primary_color};
-                margin: 2mm 0 0 0;
-            }}
-            .trip-summary-blurb {{
-                font-size: 12pt;
-                color: {theme.primary_color};
-                margin: 2mm 0 0 0;
+            .trip-summary-dates {{
+                margin-top: 4px;
+                font-size: 11pt;
+                color: #374151;
             }}
             .trip-summary-location {{
+                margin-top: 2px;
                 font-size: 10pt;
-                color: {theme.secondary_color};
-                margin: 0;
+                color: #4b5563;
+            }}
+            .trip-summary-blurb {{
+                font-size: 11pt;
+                margin-top: 6px;
+                color: #111827;
+            }}
+            .trip-summary-stats {{
+                margin-top: 6px;
+                font-size: 10pt;
+                color: #374151;
+            }}
+            .trip-summary-stats span + span {{
+                margin-left: 6px;
             }}
         </style>
-        <div class="trip-summary-card">
-            <h1 class="trip-summary-title">{title}</h1>
-            <p class="trip-summary-subtitle">{subtitle}</p>
-            {f'<p class=\"trip-summary-blurb\">{blurb}</p>' if blurb else ''}
-            {f'<p class=\"trip-summary-location\">{location_label}</p>' if location_label else ''}
-            {f'<p class=\"trip-summary-meta\">{stats_line}</p>' if stats_line else ''}
-        </div>
+        <section class="trip-summary">
+            <header class="trip-summary-header">
+                <div class="trip-summary-kicker">TRIP SUMMARY</div>
+                <h1 class="trip-summary-title">{title}</h1>
+                {f'<div class="trip-summary-dates">{subtitle}</div>' if subtitle else ''}
+                {f'<div class="trip-summary-location">{location_label}</div>' if location_label else ''}
+                {f'<div class="trip-summary-blurb">{blurb}</div>' if blurb else ''}
+                {f'<div class="trip-summary-stats">' + ' '.join([f'<span>{part}</span>' for part in stats_line_parts]) + '</div>' if stats_line_parts else ''}
+            </header>
+        </section>
     </div>
     """
 
@@ -860,25 +849,19 @@ def _render_day_intro(
     mode: str,
     media_base_url: str | None,
 ) -> str:
-    """Render a simple day intro page."""
+    """Render a chapter-opener style day intro page."""
     bg_color = layout.background_color or theme.background_color
-    day_index = layout.elements and layout.elements[0]  # unused, payload holds info
-    payload = {}
-    # payload not available directly on layout; rely on .page_content in elements is not accessible here.
-    # Use layout.page_type specific data: stored in layout? Not available; use layout.elements? Instead,
-    # fallback to reading from layout via attributes set in book planner payload when creating PageLayout.
-    day_idx = layout.elements and layout.elements[0].text if layout.elements else ""
-    # Since LayoutRects already hold text, build HTML from PageLayout elements directly.
+    # Extract text fragments from layout rects
     header = ""
     title = ""
-    photos = ""
+    photos_text = ""
     for elem in layout.elements:
-        if elem.font_size and elem.font_size >= 20:
+        if elem.font_size and elem.font_size >= 20 and elem.text:
             title = elem.text
-        elif elem.font_size and elem.font_size <= 12 and not header:
+        elif elem.font_size and elem.font_size <= 12 and not header and elem.text:
             header = elem.text
-        elif elem.font_size and elem.font_size <= 12:
-            photos = elem.text
+        elif elem.font_size and elem.font_size <= 12 and elem.text:
+            photos_text = elem.text
     segment_count = getattr(layout, "segment_count", None)
     total_hours = getattr(layout, "segments_total_duration_hours", None)
     total_km = getattr(layout, "segments_total_distance_km", None)
@@ -933,6 +916,28 @@ def _render_day_intro(
             else:
                 mini_route_src = _resolve_web_image_url(f"/static/{rel_path}" if rel_path else abs_path, media_base_url)
 
+    # Build a compact stats line
+    stats_parts: List[str] = []
+    if photos_text:
+        stats_parts.append(photos_text)
+    elif getattr(layout, "photos_count", None):
+        stats_parts.append(f"{layout.photos_count} photos")
+    if segment_count is not None:
+        stats_parts.append(f"{segment_count} segments")
+    if total_km is not None:
+        stats_parts.append(f"~{total_km:.1f} km")
+    if total_hours is not None:
+        stats_parts.append(f"{total_hours:.1f} h")
+    stats_line = " • ".join([p for p in stats_parts if p])
+
+    segment_list_html = (
+        f'<ul class="day-intro-segments">'
+        + "".join([f"<li>{line}</li>" for line in segment_lines])
+        + "</ul>"
+        if segment_lines
+        else ""
+    )
+
     return f"""
     <div class="page day-intro-page" style="
         position: relative;
@@ -941,70 +946,79 @@ def _render_day_intro(
         background: {bg_color};
         font-family: {theme.font_family};
         color: {theme.primary_color};
-        display: flex;
-        align-items: center;
-        justify-content: center;
         page-break-after: always;
     ">
         <style>
-            .day-intro-center {{
-                text-align: center;
+            .day-intro {{
+                width: 88%;
+                max-width: 190mm;
+                margin: 16mm auto;
                 display: flex;
                 flex-direction: column;
-                gap: 6px;
+                gap: 10px;
             }}
-            .day-intro-photos {{
-                margin-top: 6px;
-                margin-bottom: 10px;
+            .day-intro-header {{
+                margin-bottom: 4px;
+            }}
+            .day-intro-title {{
+                font-size: 24pt;
+                font-family: {theme.title_font_family};
+                margin: 0;
+                letter-spacing: 0.2pt;
+            }}
+            .day-intro-subtitle {{
+                font-size: 12pt;
+                color: {theme.secondary_color};
+                margin: 2px 0 6px 0;
             }}
             .day-intro-tagline {{
-                margin-top: 6px;
-                margin-bottom: 6px;
+                margin: 2px 0 8px 0;
+                font-size: 12pt;
+                color: {theme.primary_color};
             }}
-            .day-intro-location {{
-                margin-top: 4px;
-                margin-bottom: 4px;
-                font-size: 10pt;
-                color: {theme.secondary_color};
+            .day-intro-stats {{
+                font-size: 11pt;
+                color: {theme.primary_color};
+                margin: 0 0 8px 0;
             }}
-            .day-intro-summary {{
-                margin-top: 4px;
-                margin-bottom: 6px;
+            .day-intro-stats span + span {{
+                margin-left: 6px;
+            }}
+            .day-intro-map {{
+                margin: 8px 0 12px 0;
+            }}
+            .day-intro-map img {{
+                width: 100%;
+                height: auto;
+                border-radius: 8px;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+                display: block;
             }}
             .day-intro-segments {{
                 list-style: disc;
                 list-style-position: outside;
-                margin: 8px auto 0;
-                padding: 0 18px;
-                text-align: left;
-                max-width: 80%;
+                margin: 8px 0 0 0;
+                padding-left: 18px;
                 font-size: 10pt;
                 color: {theme.secondary_color};
             }}
             .day-intro-segments li {{
                 margin: 2px 0;
             }}
-            .day-intro-mini-map {{
-                margin-top: 18px;
-                display: flex;
-                justify-content: center;
-            }}
-            .day-intro-mini-map img {{
-                max-width: 70%;
-                height: auto;
-                border-radius: 8px;
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-            }}
         </style>
-        <div class="day-intro-center">
-            <div style="font-size: 12pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
-            <div style="font-size: 24pt; font-family: {theme.title_font_family}; color: {theme.primary_color};">{title}</div>
-            {f'<div class=\"day-intro-photos\" style=\"font-size: 12pt; color: {theme.secondary_color};\">{photos}</div>' if photos else ''}
-            {f'<div class=\"day-intro-tagline\" style=\"font-size: 11pt; color: {theme.primary_color};\">{tagline}</div>' if tagline else ''}
-            {f'<div class=\"day-intro-location\">{location_label}</div>' if location_label else ''}
-            {f'<div class=\"day-intro-summary\" style=\"font-size: 11pt; color: {theme.primary_color};\">{summary_line}</div>' if summary_line else ''}
-            {f'<div class=\"day-intro-mini-map\"><img src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
-            {f'<ul class=\"day-intro-segments\">' + ''.join([f'<li>{line}</li>' for line in segment_lines]) + '</ul>' if segment_lines else ''}
+        <div class="day-intro">
+            <div class="day-intro-header">
+                <div style="font-size: 10pt; color: {theme.secondary_color}; text-transform: uppercase; letter-spacing: 0.08em;">{header}</div>
+                <h1 class="day-intro-title">{title}</h1>
+                {f'<div class=\"day-intro-tagline\">{tagline}</div>' if tagline else ''}
+                {f'<div class=\"day-intro-subtitle\">{location_label}</div>' if location_label else ''}
+            </div>
+            <div class="day-intro-body">
+                {f'<div class=\"day-intro-stats\">{stats_line}</div>' if stats_line else ''}
+                {f'<div class=\"day-intro-stats\">{summary_line}</div>' if (summary_line and summary_line != stats_line) else ''}
+                {f'<div class=\"day-intro-map\"><img src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
+                {segment_list_html}
+            </div>
         </div>
     </div>
     """
