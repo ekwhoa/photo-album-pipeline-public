@@ -308,6 +308,16 @@ def _generate_book_html(
     height_mm = context.page_height_mm
 
     pages_html = []
+
+    # Precompute itinerary days once (used by trip summary and optional itinerary page)
+    try:
+        asset_list = list(assets.values())
+        manifest = build_manifest(book.id, asset_list)
+        days = build_days_and_events(manifest)
+        itinerary_days = build_book_itinerary(book, days, asset_list)
+    except Exception:
+        itinerary_days = []
+
     def _layout_has_photos(layout: PageLayout) -> bool:
         elements = getattr(layout, "elements", None) or []
         asset_elems = [e for e in elements if getattr(e, "asset_id", None)]
@@ -334,6 +344,8 @@ def _generate_book_html(
             layout.payload.get('asset_ids') if hasattr(layout, 'payload') else None,
             getattr(layout, "layout_variant", None),
         )
+        if layout.page_type == PageType.TRIP_SUMMARY:
+            setattr(layout, "itinerary_days", itinerary_days)
         page_html = _render_page_html(
             layout,
             assets,
@@ -347,13 +359,6 @@ def _generate_book_html(
         pages_html.append(page_html)
 
     # Optional itinerary page appended after all pages
-    try:
-        asset_list = list(assets.values())
-        manifest = build_manifest(book.id, asset_list)
-        days = build_days_and_events(manifest)
-        itinerary_days = build_book_itinerary(book, days, asset_list)
-    except Exception:
-        itinerary_days = []
     if itinerary_days:
         pages_html.append(
             _render_itinerary_page(
@@ -769,6 +774,65 @@ def _render_trip_summary_card(
         blurb = build_trip_summary_blurb(ctx)
     location_label = _location_label_for_segments(getattr(layout, "segments", None) or [])
 
+    itinerary_days = getattr(layout, "itinerary_days", None) or []
+
+    def fmt_date(date_iso: str) -> str:
+        try:
+            from datetime import datetime
+
+            dt = datetime.fromisoformat(date_iso)
+            return dt.strftime("%B %d, %Y")
+        except Exception:
+            return date_iso
+
+    def fmt_distance(km: Optional[float]) -> str:
+        if km is None or km <= 0:
+            return ""
+        return f"~{km:.1f} km"
+
+    def fmt_hours(hours: Optional[float]) -> str:
+        if hours is None or hours <= 0:
+            return ""
+        return f"{hours:.1f} h"
+
+    day_rows = ""
+    if itinerary_days:
+        rows: List[str] = []
+        for day in itinerary_days:
+            date_txt = fmt_date(getattr(day, "date_iso", "") or "")
+            locations = getattr(day, "locations", None) or []
+            location_labels: List[str] = []
+            if locations:
+                for loc in locations:
+                    label = getattr(loc, "location_short", None) or getattr(
+                        loc, "location_full", None
+                    )
+                    if label:
+                        location_labels.append(label)
+            location_line = " • ".join(location_labels)
+            segments_count = len(getattr(day, "stops", []) or [])
+            distance_txt = fmt_distance(getattr(day, "segments_total_distance_km", None))
+            hours_txt = fmt_hours(getattr(day, "segments_total_duration_hours", None))
+            stats_parts = [
+                f"{getattr(day, 'photos_count', 0)} photos",
+                f"{segments_count} segments",
+            ]
+            if distance_txt:
+                stats_parts.append(distance_txt)
+            if hours_txt:
+                stats_parts.append(hours_txt)
+            stats_line = " • ".join(stats_parts)
+            rows.append(
+                f"""
+                <div class="trip-summary-day-row">
+                    <div class="trip-summary-day-title">Day {getattr(day, 'day_index', '')} — {date_txt}</div>
+                    {f'<div class="trip-summary-day-location">{location_line}</div>' if location_line else ''}
+                    <div class="trip-summary-day-meta">{stats_line}</div>
+                </div>
+                """
+            )
+        day_rows = f'<div class="trip-summary-days">{"".join(rows)}</div>'
+
     return f"""
     <div class="page trip-summary-page" style="
         position: relative;
@@ -822,6 +886,25 @@ def _render_trip_summary_card(
             .trip-summary-stats span + span {{
                 margin-left: 6px;
             }}
+            .trip-summary-days {{
+                margin-top: 12px;
+            }}
+            .trip-summary-day-row + .trip-summary-day-row {{
+                margin-top: 10px;
+            }}
+            .trip-summary-day-title {{
+                font-weight: 600;
+                font-size: 11pt;
+                margin: 0;
+            }}
+            .trip-summary-day-location {{
+                font-size: 10pt;
+                color: #4b5563;
+            }}
+            .trip-summary-day-meta {{
+                font-size: 9pt;
+                color: #374151;
+            }}
         </style>
         <section class="trip-summary">
             <header class="trip-summary-header">
@@ -832,6 +915,7 @@ def _render_trip_summary_card(
                 {f'<div class="trip-summary-blurb">{blurb}</div>' if blurb else ''}
                 {f'<div class="trip-summary-stats">' + ' '.join([f'<span>{part}</span>' for part in stats_line_parts]) + '</div>' if stats_line_parts else ''}
             </header>
+            {day_rows}
         </section>
     </div>
     """
