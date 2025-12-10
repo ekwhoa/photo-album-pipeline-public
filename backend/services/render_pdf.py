@@ -600,8 +600,8 @@ def _render_map_route_card(
     bg_color = layout.background_color or theme.background_color
 
     image_src = ""
-    title = "Trip route"
-    subtitle_parts: List[str] = []
+    title = "Trip Route"
+    stats_candidates: List[str] = []
 
     for elem in layout.elements:
         if (elem.image_path or elem.image_url) and not image_src:
@@ -610,24 +610,26 @@ def _render_map_route_card(
             else:
                 image_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
         elif elem.text:
-            if title == "Trip route" and elem.text.lower().startswith("trip route"):
+            # Keep the first text element as title if it looks like one; otherwise treat as stats text.
+            if title == "Trip Route" and elem.text.lower().startswith("trip route"):
                 title = elem.text
             else:
-                subtitle_parts.append(elem.text)
+                stats_candidates.append(elem.text)
 
-    subtitle = " • ".join([s for s in subtitle_parts if s.strip()])
+    stats_from_elements = " • ".join([s for s in stats_candidates if s.strip()])
 
     segments = getattr(layout, "segments", []) or []
     seg_count = len(segments)
     seg_total_hours = sum((s.get("duration_hours") or 0.0) for s in segments)
     seg_total_km = sum((s.get("distance_km") or 0.0) for s in segments)
     seg_summary = format_day_segment_summary(seg_count, seg_total_hours, seg_total_km)
+    stats_line = stats_from_elements or seg_summary
 
     figure_html = ""
     if image_src:
         figure_html = f"""
-            <div class="trip-route-map">
-                <img src="{image_src}" alt="Trip route map" />
+            <div class="trip-route-map-frame">
+                <img class="trip-route-map-image" src="{image_src}" alt="Trip route map" />
             </div>
         """
     else:
@@ -658,46 +660,31 @@ def _render_map_route_card(
                 margin: 16mm auto;
             }}
             .trip-route-header {{
-                margin-bottom: 8px;
-            }}
-            .trip-route-kicker {{
-                font-size: 0.8rem;
-                letter-spacing: 0.08em;
-                text-transform: uppercase;
-                margin: 0 0 4px 0;
+                margin-bottom: 12px;
             }}
             .trip-route-title {{
                 font-family: {theme.title_font_family};
                 font-size: 22pt;
                 margin: 0;
             }}
-            .trip-route-subtitle {{
-                margin: 4px 0;
-                font-size: 11pt;
-                color: #4b5563;
-            }}
             .trip-route-stats {{
-                font-size: 10pt;
+                font-size: 11pt;
                 color: #374151;
+                margin-top: 4px;
             }}
             .trip-route-stats span + span {{
                 margin-left: 6px;
             }}
-            .trip-route-map {{
-                margin-top: 12px;
-                background: #0b111c;
+            .trip-route-map-frame {{
+                margin-top: 14px;
                 border-radius: 8px;
-                border: 1px solid #cbd5e1;
+                overflow: hidden;
                 box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
-                padding: 6mm;
             }}
-            .trip-route-map img {{
+            .trip-route-map-image {{
                 width: 100%;
                 height: auto;
                 display: block;
-                border-radius: 6px;
-                object-fit: contain;
-                max-height: 130mm;
             }}
             .map-route-placeholder {{
                 width: 100%;
@@ -711,10 +698,8 @@ def _render_map_route_card(
         </style>
         <section class="trip-route-section">
             <header class="trip-route-header">
-                <div class="trip-route-kicker">TRIP ROUTE</div>
                 <h1 class="trip-route-title">{title}</h1>
-                {f'<div class="trip-route-subtitle">{subtitle}</div>' if subtitle else ''}
-                {f'<div class="trip-route-stats"><span>{seg_summary}</span></div>' if seg_summary else ''}
+                {f'<div class="trip-route-stats"><span>{stats_line}</span></div>' if stats_line else ''}
             </header>
             {figure_html}
         </section>

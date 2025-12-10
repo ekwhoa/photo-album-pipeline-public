@@ -61,7 +61,7 @@ ROUTE_SHADOW_COLOR = (0, 0, 0, 140)
 ROUTE_GLOW_COLOR = (255, 255, 255, 220)
 ROUTE_MARKER_FILL = (255, 255, 255, 255)
 ROUTE_MARKER_OUTLINE = (0, 0, 0, 220)
-ROUTE_MARKER_RADIUS = 5
+ROUTE_MARKER_RADIUS = 7
 ROUTE_CANVAS_PADDING_PX = 24
 LEGEND_MARGIN_PX = 16
 TILE_DARKEN_OVERLAY = (0, 0, 0, 120)
@@ -314,8 +314,9 @@ def _apply_tile_overlay(bg: Image.Image) -> None:
 def _compute_route_width(size: Tuple[int, int]) -> int:
     """Derive a base stroke width relative to canvas size."""
     w, h = size
-    base = min(w, h) // 45
-    return max(6, min(base, 16))
+    # Slightly larger base width for better print visibility
+    base = min(w, h) // 35
+    return max(8, min(base, 20))
 
 
 def _draw_route_markers(
@@ -505,16 +506,16 @@ def _render_route_image(
             route_draw.line(
                 smoothed_scaled,
                 fill=ROUTE_SHADOW_COLOR,
-                width=int(base_width + 6),
+                width=int(base_width + 7),
                 joint="curve",
             )
             route_draw.line(
                 smoothed_scaled,
                 fill=ROUTE_GLOW_COLOR,
-                width=int(base_width + 3),
+                width=int(base_width + 4),
                 joint="curve",
             )
-            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(base_width))
+            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(base_width + 1))
 
             blurred_route = route_layer.filter(ImageFilter.GaussianBlur(radius=1.0 * UPSCALE_FACTOR))
             blended_route = Image.alpha_composite(blurred_route, route_layer)
