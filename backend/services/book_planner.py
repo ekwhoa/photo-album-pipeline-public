@@ -199,7 +199,6 @@ def plan_book(
         page_type=PageType.TITLE_PAGE,
         payload={
             "title": title,
-            "subtitle": trip_subtitle,
             "date_range": date_range_text,
             "stats_line": stats_line_title,
         },

@@ -855,13 +855,11 @@ def _render_title_page(
     else:
         data = {
             "title": getattr(layout, "title", ""),
-            "subtitle": getattr(layout, "subtitle", ""),
             "date_range": getattr(layout, "date_range", ""),
             "stats_line": getattr(layout, "stats_line", ""),
         }
 
-    title = data.get("title", "") or ""
-    subtitle = data.get("subtitle", "") or ""
+    title = data.get("title", "") or getattr(layout, "title", "") or ""
     date_range = data.get("date_range", "") or ""
     stats_line = data.get("stats_line", "") or ""
 
@@ -913,7 +911,6 @@ def _render_title_page(
             <div class="front-cover-content">
                 {f'<h1 class="front-cover-title">{title}</h1>' if title else ''}
                 {f'<div class="front-cover-dates">{date_range}</div>' if date_range else ''}
-                {f'<p class="front-cover-subtitle">{subtitle}</p>' if subtitle else ''}
                 {f'<div class="front-cover-stats">{stats_line}</div>' if stats_line else ''}
             </div>
         </section>
