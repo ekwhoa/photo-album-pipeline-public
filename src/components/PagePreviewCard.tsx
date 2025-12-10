@@ -72,6 +72,16 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
     return stats.length ? stats.join(' • ') : '';
   }, [page.segment_distance_km, page.segment_duration_hours, page.segment_photo_count]);
 
+  const badgeText = segmentLabel
+    ? segmentLabel.toUpperCase()
+    : page.segment_kind === 'local'
+    ? 'Local segment'
+    : page.segment_kind === 'travel'
+    ? 'Travel segment'
+    : page.segment_kind
+    ? String(page.segment_kind)
+    : null;
+
   return (
     <Card
       className="cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all group overflow-hidden"
@@ -129,14 +139,10 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
               {page.index + 1}
             </span>
           </div>
-          {page.segment_kind && (
+          {badgeText && (
             <div className="absolute top-2 right-2">
               <span className="text-[10px] uppercase tracking-wide px-2 py-1 rounded-full bg-background/90 border text-foreground shadow-sm">
-                {page.segment_kind === 'local'
-                  ? 'Local segment'
-                  : page.segment_kind === 'travel'
-                  ? 'Travel segment'
-                  : page.segment_kind}
+                {badgeText}
               </span>
             </div>
           )}

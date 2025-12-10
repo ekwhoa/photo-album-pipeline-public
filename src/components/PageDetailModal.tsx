@@ -95,6 +95,16 @@ export function PageDetailModal({
     return parts.join(' • ');
   })();
   const segmentLabel = (page as any).segment_label ?? (page as any).segmentLabel ?? null;
+  const badgeText = segmentLabel
+    ? segmentLabel.toUpperCase()
+    : page.segment_kind === 'local'
+    ? 'Local segment'
+    : page.segment_kind === 'travel'
+    ? 'Travel segment'
+    : page.segment_kind
+    ? String(page.segment_kind)
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -102,16 +112,12 @@ export function PageDetailModal({
           <DialogTitle className="flex items-center gap-2">
             {icon}
             Page {page.index + 1} – {label}
-            {page.segment_kind && (
+            {badgeText && (
               <span className="text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full border bg-muted text-muted-foreground">
-                {page.segment_kind === 'local'
-                  ? 'Local segment'
-                  : page.segment_kind === 'travel'
-                  ? 'Travel segment'
-              : page.segment_kind}
-            </span>
-          )}
-        </DialogTitle>
+                {badgeText}
+              </span>
+            )}
+          </DialogTitle>
           {segmentLabel && (
             <p className="text-xs text-muted-foreground mt-1">{segmentLabel}</p>
           )}
