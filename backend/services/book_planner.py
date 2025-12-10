@@ -1528,80 +1528,13 @@ def _make_blank_page() -> Page:
 
 def insert_blank_pages_for_layout(pages: List[Page]) -> List[Page]:
     """
-    Insert blank pages to enforce layout parity:
-    - Day intros should land on a right-hand page (interior index even).
-    - Photo spread pairs (same hero) should start on a left-hand page (interior index odd).
-    Starts counting interior pages at the title_page or trip_summary page
-    (treated as the first right-hand interior page).
+    Previously inserted blank pages to enforce parity for day intros / spreads.
+    Blanks are disabled for now to avoid mid-book empty pages that break flow.
     """
-    result: List[Page] = []
-    interior_started = False
-    interior_idx = 0  # 0 => right, 1 => left
-    i = 0
-    while i < len(pages):
-        page = pages[i]
-
-        # Start parity enforcement at trip_summary; before that, just copy pages
-        if not interior_started:
-            result.append(page)
-            if page.page_type == PageType.TITLE_PAGE:
-                # Title page is treated as the first interior (right-hand) page;
-                # the next page should be a left-hand page.
-                interior_started = True
-                interior_idx = 0
-            elif page.page_type == PageType.TRIP_SUMMARY:
-                interior_started = True
-                # trip_summary consumes the first (right-hand) interior page
-                interior_idx = 1  # next page will be left
-            elif page.page_type == PageType.DAY_INTRO:
-                interior_started = True
-                interior_idx = 0  # day intro wants to be right (even)
-            i += 1
-            continue
-
-        # Day intro parity: must be on right (even)
-        if page.page_type == PageType.DAY_INTRO:
-            if interior_idx % 2 == 1:
-                result.append(_make_blank_page())
-                interior_idx += 1
-            result.append(page)
-            interior_idx += 1
-            i += 1
-            continue
-
-        # Photo spread pair handling
-        if (
-            page.page_type == PageType.PHOTO_SPREAD
-            and i + 1 < len(pages)
-            and pages[i + 1].page_type == PageType.PHOTO_SPREAD
-        ):
-            hero_a = page.payload.get("hero_asset_id")
-            hero_b = pages[i + 1].payload.get("hero_asset_id")
-            if hero_a and hero_a == hero_b:
-                if interior_idx % 2 == 0:
-                    result.append(_make_blank_page())
-                    interior_idx += 1
-                result.append(page)
-                interior_idx += 1
-                result.append(pages[i + 1])
-                interior_idx += 1
-                i += 2
-                continue
-
-        # Default: just append and advance
-        result.append(page)
-        interior_idx += 1
-        i += 1
-
-    # Reindex pages
-    for idx, page in enumerate(result):
+    # Simply reindex and return the existing pages; no blanks inserted.
+    for idx, page in enumerate(pages):
         page.index = idx
-
-    for idx, page in enumerate(result):
-        if page.page_type == PageType.BLANK:
-            logger.info("Blank page at index %s", idx)
-
-    return result
+    return pages
 
 
 # ============================================
