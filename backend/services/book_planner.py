@@ -32,6 +32,7 @@ MIN_CLUSTER_SIZE_FOR_AUTO_HIDE = 3  # never auto-hide if only 2 photos
 MIN_PHOTOS_FOR_HIGHLIGHT = 6
 MIN_DURATION_HOURS_FOR_HIGHLIGHT = 0.5
 MAX_DISTANCE_KM_FOR_LOCAL_HIGHLIGHT = 15.0
+MAX_HIGHLIGHT_PHOTOS = 8
 
 # Day layout profile heuristics (controls full-page bias per day)
 @dataclass
@@ -74,6 +75,15 @@ def _is_notable_local_segment(summary: Dict[str, Any]) -> bool:
     if distance_km <= 0 or distance_km > MAX_DISTANCE_KM_FOR_LOCAL_HIGHLIGHT:
         return False
     return True
+
+
+def _select_segment_highlight_photos(asset_ids: List[str]) -> List[str]:
+    """Choose which photos to surface on a segment highlight page.
+
+    For v1 we simply take the first N in order. Remaining photos still
+    participate in the normal day grids (duplication is acceptable for now).
+    """
+    return asset_ids[:MAX_HIGHLIGHT_PHOTOS]
 
 
 def plan_book(
@@ -248,13 +258,16 @@ def plan_book(
             asset_ids_for_seg = seg_summary.get("asset_ids") or []
             if not asset_ids_for_seg:
                 continue
+            selected_highlight_photos = _select_segment_highlight_photos(asset_ids_for_seg)
+            if not selected_highlight_photos:
+                continue
             highlight_seen.add(segment_id)
             interior_pages.append(
                 Page(
                     index=current_index,
                     page_type=PageType.PHOTO_GRID,
                     payload={
-                        "asset_ids": asset_ids_for_seg,
+                        "asset_ids": selected_highlight_photos,
                         "layout_variant": "segment_local_highlight_v1",
                         "segment_id": segment_id,
                         "segment_kind": seg_summary.get("kind") or "local",
