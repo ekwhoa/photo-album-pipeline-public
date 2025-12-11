@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Iterable
 from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
 from services import map_route_renderer
+from services.map_route_renderer import RouteMarker
 from services.blurb_engine import (
     TripSummaryContext,
     DayIntroContext,
@@ -93,6 +94,52 @@ def _location_label_for_segments(segments: Iterable[Dict[str, Any]]) -> Optional
         return None
     place = reverse_geocode_label(*centroid)
     return place.short_label if place else None
+
+
+def _build_trip_route_markers(itinerary: Any) -> List[RouteMarker]:
+    """Collect markers for local stops across the trip."""
+    markers: List[RouteMarker] = []
+    days = getattr(itinerary, "days", None) if itinerary is not None else None
+    if days is None:
+        days = itinerary
+    for day in days or []:
+        stops = getattr(day, "stops", None) or []
+        for stop in stops:
+            if getattr(stop, "kind", None) != "local":
+                continue
+            poly = getattr(stop, "polyline", None)
+            if not poly:
+                continue
+            try:
+                lat, lon = poly[0]
+            except Exception:
+                continue
+            markers.append(RouteMarker(lat=lat, lon=lon, kind=stop.kind))
+
+    MAX_MARKERS = 12
+    if len(markers) > MAX_MARKERS:
+        markers = markers[:MAX_MARKERS]
+    return markers
+
+
+def _build_day_route_markers(day: Any) -> List[RouteMarker]:
+    """Collect markers for local stops within a day."""
+    markers: List[RouteMarker] = []
+    if not day:
+        return markers
+    stops = getattr(day, "stops", None) or []
+    for stop in stops:
+        if getattr(stop, "kind", None) != "local":
+            continue
+        poly = getattr(stop, "polyline", None)
+        if not poly:
+            continue
+        try:
+            lat, lon = poly[0]
+        except Exception:
+            continue
+        markers.append(RouteMarker(lat=lat, lon=lon, kind=stop.kind))
+    return markers
 
 
 def render_book_to_pdf(
@@ -346,6 +393,23 @@ def _generate_book_html(
         )
         if layout.page_type == PageType.TRIP_SUMMARY:
             setattr(layout, "itinerary_days", itinerary_days)
+        if itinerary_days:
+            if layout.page_type == PageType.MAP_ROUTE:
+                setattr(layout, "itinerary_days", itinerary_days)
+                if not getattr(layout, "book_id", None):
+                    setattr(layout, "book_id", getattr(book, "id", None))
+            if layout.page_type == PageType.DAY_INTRO:
+                payload = getattr(layout, "payload", None) or {}
+                day_idx = payload.get("day_index")
+                day_match = None
+                if day_idx is not None:
+                    for day in itinerary_days:
+                        if getattr(day, "day_index", None) == day_idx:
+                            day_match = day
+                            break
+                setattr(layout, "itinerary_day", day_match)
+                if not getattr(layout, "book_id", None):
+                    setattr(layout, "book_id", getattr(book, "id", None))
         page_html = _render_page_html(
             layout,
             assets,
@@ -624,6 +688,22 @@ def _render_map_route_card(
     stats_from_elements = " • ".join([s for s in stats_candidates if s.strip()])
 
     segments = getattr(layout, "segments", []) or []
+    trip_markers = _build_trip_route_markers(getattr(layout, "itinerary_days", None))
+    route_points = _points_from_segments(segments)
+    if layout.book_id and route_points:
+        trip_rel_path, trip_abs_path = map_route_renderer.render_trip_route_map(
+            layout.book_id,
+            route_points,
+            markers=trip_markers,
+        )
+        if trip_rel_path or trip_abs_path:
+            if mode == "pdf":
+                image_src = trip_abs_path or image_src
+            else:
+                image_src = _resolve_web_image_url(
+                    f"/static/{trip_rel_path}" if trip_rel_path else trip_abs_path,
+                    media_base_url,
+                )
     seg_count = len(segments)
     seg_total_hours = sum((s.get("duration_hours") or 0.0) for s in segments)
     seg_total_km = sum((s.get("distance_km") or 0.0) for s in segments)
@@ -1071,13 +1151,12 @@ def _render_day_intro(
     # Optional mini route image for this day if segments have polylines
     mini_route_src = ""
     segments = getattr(layout, "segments", None) or []
+    day_markers = _build_day_route_markers(getattr(layout, "itinerary_day", None))
     if layout.book_id and segments:
-        rel_path, abs_path = map_route_renderer.render_day_route_image(
+        rel_path, abs_path = map_route_renderer.render_day_route_map(
             layout.book_id,
             segments,
-            width=800,
-            height=360,
-            filename_prefix=f"day_{layout.page_index}_route",
+            markers=day_markers,
         )
         if rel_path or abs_path:
             if mode == "pdf":

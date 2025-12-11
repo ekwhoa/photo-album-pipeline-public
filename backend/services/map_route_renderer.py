@@ -393,10 +393,10 @@ def _draw_route_markers(
 def _render_route_image(
     book_id: str,
     points: Sequence[Tuple[float, float]],
-    markers: Optional[List[RouteMarker]] = None,
     width: int,
     height: int,
     filename_prefix: str = "route",
+    markers: Optional[List[RouteMarker]] = None,
 ) -> Tuple[str, str]:
     """
     Shared rendering logic for trip and day maps.
