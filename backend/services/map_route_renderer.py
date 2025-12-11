@@ -76,8 +76,13 @@ MARKER_OUTLINE_WIDTH_LOCAL = 3
 MARKER_OUTLINE_WIDTH_TRAVEL = 2
 MARKER_RADIUS_PLACE = 4
 MARKER_OUTLINE_WIDTH_PLACE = 2
-PLACE_MARKER_FILL = (255, 255, 255, 255)
-PLACE_MARKER_OUTLINE = (100, 100, 100, 255)
+# Exaggerated values so they are clearly visible; we can tune later.
+MARKER_RADIUS_PLACE = 7
+MARKER_OUTLINE_WIDTH_PLACE = 3
+
+# Bright yellow with black outline so it's obviously different from existing markers.
+PLACE_MARKER_FILL = (255, 235, 59, 255)  # yellow
+PLACE_MARKER_OUTLINE = (0, 0, 0, 255)  # black
 
 
 @dataclass
@@ -597,28 +602,50 @@ def _render_route_image(
             composed = Image.alpha_composite(background_img, blended_route)
 
             overlay_draw = ImageDraw.Draw(composed, "RGBA")
+            # Partition markers so place markers are drawn last (on top).
+            place_pairs: List[tuple] = []
+            other_pairs: List[tuple] = []
             if marker_coords_scaled:
                 for marker, (mx, my) in zip(markers or [], marker_coords_scaled):
-                    if marker.kind == "local":
-                        radius = MARKER_RADIUS_LOCAL
-                        fill = (255, 255, 255, 255)
-                        outline = (60, 60, 60, 255)
-                        stroke_width = MARKER_OUTLINE_WIDTH_LOCAL
-                    elif marker.kind == "place":
-                        radius = MARKER_RADIUS_PLACE
-                        fill = PLACE_MARKER_FILL
-                        outline = PLACE_MARKER_OUTLINE
-                        stroke_width = MARKER_OUTLINE_WIDTH_PLACE
+                    if marker.kind == "place":
+                        place_pairs.append((marker, (mx, my)))
                     else:
-                        radius = MARKER_RADIUS_TRAVEL
-                        fill = (230, 230, 230, 255)
-                        outline = (80, 80, 80, 255)
-                        stroke_width = MARKER_OUTLINE_WIDTH_TRAVEL
-                    r_scaled = int(radius * UPSCALE_FACTOR)
-                    stroke_scaled = max(1, int(stroke_width * UPSCALE_FACTOR))
-                    marker_bbox = (mx - r_scaled, my - r_scaled, mx + r_scaled, my + r_scaled)
-                    overlay_draw.ellipse(marker_bbox, fill=fill, outline=outline, width=stroke_scaled)
+                        other_pairs.append((marker, (mx, my)))
+
+            # Draw non-place markers first (local/travel/etc.)
+            for marker, (mx, my) in other_pairs:
+                if marker.kind == "local":
+                    radius = MARKER_RADIUS_LOCAL
+                    fill = (255, 255, 255, 255)
+                    outline = (60, 60, 60, 255)
+                    stroke_width = MARKER_OUTLINE_WIDTH_LOCAL
+                else:
+                    radius = MARKER_RADIUS_TRAVEL
+                    fill = (230, 230, 230, 255)
+                    outline = (80, 80, 80, 255)
+                    stroke_width = MARKER_OUTLINE_WIDTH_TRAVEL
+                r_scaled = int(radius * UPSCALE_FACTOR)
+                stroke_scaled = max(1, int(stroke_width * UPSCALE_FACTOR))
+                marker_bbox = (mx - r_scaled, my - r_scaled, mx + r_scaled, my + r_scaled)
+                overlay_draw.ellipse(marker_bbox, fill=fill, outline=outline, width=stroke_scaled)
+
+            # Draw the route's start/end markers (preserve existing behavior/style)
             _draw_route_markers(overlay_draw, coords_scaled, base_width, start_color, end_color)
+
+            # Debug: how many place markers will we draw (if any)
+            if place_pairs:
+                print(f"[MAP] drawing {len(place_pairs)} place markers")
+
+            # Draw place markers last so they appear on top of route and start/end dots
+            for marker, (mx, my) in place_pairs:
+                radius = MARKER_RADIUS_PLACE
+                fill = PLACE_MARKER_FILL
+                outline = PLACE_MARKER_OUTLINE
+                stroke_width = MARKER_OUTLINE_WIDTH_PLACE
+                r_scaled = int(radius * UPSCALE_FACTOR)
+                stroke_scaled = max(1, int(stroke_width * UPSCALE_FACTOR))
+                marker_bbox = (mx - r_scaled, my - r_scaled, mx + r_scaled, my + r_scaled)
+                overlay_draw.ellipse(marker_bbox, fill=fill, outline=outline, width=stroke_scaled)
 
             _draw_legend(overlay_draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
 
