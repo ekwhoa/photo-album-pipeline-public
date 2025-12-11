@@ -39,10 +39,16 @@ export type GridLayoutVariant =
   | 'default'
   | 'grid_3_hero'
   | 'grid_4_simple'
+  | 'grid_6_simple'
   | 'grid_2up'
   | 'grid_3up_hero'
   | 'grid_6_dense'
   | 'segment_local_highlight_v1';
+
+export interface ItineraryLocation {
+  location_short: string | null;
+  location_full: string | null;
+}
 
 export interface SegmentSummary {
   index: number;

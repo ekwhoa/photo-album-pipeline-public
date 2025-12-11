@@ -219,7 +219,9 @@ export function PageDetailModal({
 }
 
 function getLayoutVariant(page: BookPage | null): GridLayoutVariant | null {
-  return page?.layout_variant ?? null;
+  const variant = page?.layout_variant;
+  if (!variant) return null;
+  return variant as GridLayoutVariant;
 }
 
 function PhotoGridDetail({ page, assets }: { page: BookPage; assets: Asset[] }) {
