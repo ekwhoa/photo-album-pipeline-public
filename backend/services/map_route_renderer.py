@@ -9,6 +9,7 @@ import math
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -57,18 +58,33 @@ MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Route / map styling
 ROUTE_OUTLINE_COLOR = (0, 0, 0, 180)
 ROUTE_OUTLINE_EXTRA_WIDTH = 2
-ROUTE_SHADOW_COLOR = (0, 0, 0, 140)
-ROUTE_GLOW_COLOR = (255, 255, 255, 220)
+ROUTE_SHADOW_COLOR = (0, 0, 0, 180)
+ROUTE_GLOW_COLOR = (255, 255, 255, 235)
 ROUTE_MARKER_FILL = (255, 255, 255, 255)
 ROUTE_MARKER_OUTLINE = (0, 0, 0, 220)
-ROUTE_MARKER_RADIUS = 7
+ROUTE_MARKER_RADIUS = 10
+ROUTE_POI_LOCAL_RADIUS = 6
+ROUTE_POI_TRAVEL_RADIUS = 4
+ROUTE_POI_LOCAL_OUTLINE = (0, 0, 0, 230)
+ROUTE_POI_TRAVEL_OUTLINE = (70, 70, 70, 220)
 ROUTE_CANVAS_PADDING_PX = 24
 LEGEND_MARGIN_PX = 16
-TILE_DARKEN_OVERLAY = (0, 0, 0, 120)
+TILE_DARKEN_OVERLAY = (0, 0, 0, 170)
+
+
+@dataclass
+class RouteMarker:
+    lat: float
+    lon: float
+    kind: str  # e.g. "local" or "travel"
 
 # TODO(map-v2): explore further smoothing/anti-aliasing for extreme zoom levels,
 # or switching to an SVG/vector-based route renderer if we ever need ultra-high DPI.
-def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[str, str]:
+def render_route_map(
+    book_id: str,
+    points: List[Tuple[float, float]],
+    markers: Optional[List[RouteMarker]] = None,
+) -> Tuple[str, str]:
     """
     Render a static PNG map for the given route points.
 
@@ -80,7 +96,25 @@ def render_route_map(book_id: str, points: List[Tuple[float, float]]) -> Tuple[s
         (relative_path, absolute_path). Empty strings if rendering fails or insufficient points.
         relative_path is relative to the static mount root (data/).
     """
-    return _render_route_image(book_id, points, width=1600, height=1000, filename_prefix="route")
+    return _render_route_image(
+        book_id,
+        points,
+        markers=markers,
+        width=1600,
+        height=1000,
+        filename_prefix="route",
+    )
+
+
+def render_trip_route_map(
+    book_id: str,
+    points: List[Tuple[float, float]],
+    markers: Optional[List[RouteMarker]] = None,
+) -> Tuple[str, str]:
+    """
+    Render a static PNG map for the given route points (trip-wide helper).
+    """
+    return render_route_map(book_id, points, markers=markers)
 
 
 def render_day_route_image(
@@ -89,6 +123,7 @@ def render_day_route_image(
     width: int = 900,
     height: int = 300,
     filename_prefix: Optional[str] = None,
+    markers: Optional[List[RouteMarker]] = None,
 ) -> Tuple[str, str]:
     """
     Render a smaller route image for a single day using only that day's segment polylines.
@@ -100,15 +135,33 @@ def render_day_route_image(
             points.extend([(lat, lon) for lat, lon in poly])
     if filename_prefix is None:
         filename_prefix = "day_route"
-    return _render_route_image(book_id, points, width=width, height=height, filename_prefix=filename_prefix)
+    return _render_route_image(
+        book_id,
+        points,
+        markers=markers,
+        width=width,
+        height=height,
+        filename_prefix=filename_prefix,
+    )
 
 
-def render_day_route_map(book_id: str, segments: Sequence[dict]) -> Tuple[str, str]:
+def render_day_route_map(
+    book_id: str,
+    segments: Sequence[dict],
+    markers: Optional[List[RouteMarker]] = None,
+) -> Tuple[str, str]:
     """
     Public helper to mirror render_route_map but for a day's segments.
     Returns (relative_path, absolute_path).
     """
-    return render_day_route_image(book_id, segments, width=900, height=300, filename_prefix="day_route")
+    return render_day_route_image(
+        book_id,
+        segments,
+        markers=markers,
+        width=900,
+        height=300,
+        filename_prefix="day_route",
+    )
 
 
 def _get_tile_db() -> sqlite3.Connection:
@@ -340,6 +393,7 @@ def _draw_route_markers(
 def _render_route_image(
     book_id: str,
     points: Sequence[Tuple[float, float]],
+    markers: Optional[List[RouteMarker]] = None,
     width: int,
     height: int,
     filename_prefix: str = "route",
@@ -441,6 +495,18 @@ def _render_route_image(
         coords = _map_points_to_canvas(
             simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9, bbox=bbox
         )
+        marker_coords_scaled: List[Tuple[float, float]] = []
+        if markers:
+            marker_points = [(marker.lat, marker.lon) for marker in markers]
+            marker_coords = _map_points_to_canvas(
+                marker_points,
+                width,
+                height,
+                margin_px=margin_px,
+                shrink_factor=0.9,
+                bbox=bbox,
+            )
+            marker_coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in marker_coords]
         smoothed_coords = _smooth_polyline(
             coords,
             min_total_points=250,
@@ -506,16 +572,16 @@ def _render_route_image(
             route_draw.line(
                 smoothed_scaled,
                 fill=ROUTE_SHADOW_COLOR,
-                width=int(base_width + 7),
+                width=int(base_width + 10),
                 joint="curve",
             )
             route_draw.line(
                 smoothed_scaled,
                 fill=ROUTE_GLOW_COLOR,
-                width=int(base_width + 4),
+                width=int(base_width + 7),
                 joint="curve",
             )
-            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(base_width + 1))
+            _draw_gradient_polyline(route_draw, smoothed_scaled, start_color, end_color, width=int(base_width + 3))
 
             blurred_route = route_layer.filter(ImageFilter.GaussianBlur(radius=1.0 * UPSCALE_FACTOR))
             blended_route = Image.alpha_composite(blurred_route, route_layer)
@@ -523,6 +589,22 @@ def _render_route_image(
             composed = Image.alpha_composite(background_img, blended_route)
 
             overlay_draw = ImageDraw.Draw(composed, "RGBA")
+            if marker_coords_scaled:
+                for marker, (mx, my) in zip(markers or [], marker_coords_scaled):
+                    if marker.kind == "local":
+                        radius = 4
+                        fill = (255, 255, 255, 255)
+                        outline = (60, 60, 60, 255)
+                        stroke_width = 2
+                    else:
+                        radius = 3
+                        fill = (230, 230, 230, 255)
+                        outline = (80, 80, 80, 255)
+                        stroke_width = 1
+                    r_scaled = int(radius * UPSCALE_FACTOR)
+                    stroke_scaled = max(1, int(stroke_width * UPSCALE_FACTOR))
+                    marker_bbox = (mx - r_scaled, my - r_scaled, mx + r_scaled, my + r_scaled)
+                    overlay_draw.ellipse(marker_bbox, fill=fill, outline=outline, width=stroke_scaled)
             _draw_route_markers(overlay_draw, coords_scaled, base_width, start_color, end_color)
 
             _draw_legend(overlay_draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
