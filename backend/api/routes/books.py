@@ -1,7 +1,7 @@
 """
 Books API routes.
 """
-import os
+import logging
 from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, HTTPException
@@ -16,11 +16,13 @@ from services.timeline import TimelineService
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.places_client import get_default_places_client
 from services.curation import filter_approved
+from settings import settings
 
 router = APIRouter()
 books_repo = BooksRepository()
 assets_repo = AssetsRepository()
 storage = FileStorage()
+logger = logging.getLogger(__name__)
 
 
 class BookCreate(BaseModel):
@@ -329,11 +331,11 @@ async def get_book_places_debug(book_id: str):
 
         itinerary_days = build_book_itinerary(book, days, approved_assets)
         candidates = build_place_candidates(itinerary_days, approved_assets)
-        lookup_enabled = os.getenv("PLACES_LOOKUP_ENABLED", "0").lower() in ("1", "true", "yes")
-        if lookup_enabled and candidates:
+        if settings.PLACES_LOOKUP_ENABLED and candidates:
             client = get_default_places_client()
             MAX_LOOKUPS = 10
             preferred_types = {"tourism", "attraction", "stadium", "hotel", "restaurant", "park", "museum"}
+            logger.debug("places-debug: enriching top %d places with Nominatim", min(len(candidates), MAX_LOOKUPS))
             for cand in candidates[:MAX_LOOKUPS]:
                 try:
                     results = client.search_nearby(

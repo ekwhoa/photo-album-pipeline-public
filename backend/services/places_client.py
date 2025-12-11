@@ -3,17 +3,12 @@ Lightweight Places client using Nominatim (OSM) with shared rate limiting and he
 """
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 from services.geocoding import NOMINATIM_BASE_URL, NOMINATIM_HEADERS, _throttled_get
 from services.places_cache_sqlite import PlacesCache, get_default_places_cache
 from services.places_types import PlaceResult
-
-
-def _derive_search_url(base_url: str) -> str:
-    if base_url.endswith("/reverse"):
-        return base_url.rsplit("/", 1)[0] + "/search"
-    return base_url.rstrip("/") + "/search"
 
 
 class PlacesClient:
@@ -25,14 +20,26 @@ class PlacesClient:
         default_radius_m: float = 200.0,
     ):
         self.provider = provider
-        self.base_url = _derive_search_url(base_url or NOMINATIM_BASE_URL)
+        base = base_url or NOMINATIM_BASE_URL
+        if base.endswith("/reverse"):
+            base = base.rsplit("/", 1)[0]
+        self.base_url = base.rstrip("/")
         self.cache = cache or get_default_places_cache()
         self.default_radius_m = default_radius_m
+        self.logger = logging.getLogger(__name__)
 
-    def _search(self, params: dict) -> Optional[List[dict]]:
+    def _reverse_lookup(self, lat: float, lon: float, zoom: int = 18) -> Optional[dict]:
+        params = {
+            "format": "jsonv2",
+            "lat": str(lat),
+            "lon": str(lon),
+            "zoom": str(zoom),
+            "addressdetails": "1",
+            "namedetails": "1",
+        }
         try:
             resp = _throttled_get(
-                self.base_url,
+                f"{self.base_url}/reverse",
                 params=params,
                 headers=NOMINATIM_HEADERS,
                 timeout=5.0,
@@ -62,38 +69,27 @@ class PlacesClient:
         if cached is not None:
             return cached
 
-        # Approximate bounding box based search
-        deg_per_meter = 1.0 / 111_000.0
-        delta_deg = radius * deg_per_meter
-        params = {
-            "format": "jsonv2",
-            "q": kind or "",
-            "limit": str(max_results),
-            "bounded": 1,
-            "viewbox": f"{lon - delta_deg},{lat + delta_deg},{lon + delta_deg},{lat - delta_deg}",
-            "lat": str(lat),
-            "lon": str(lon),
-        }
-        data = self._search(params) or []
+        data = self._reverse_lookup(lat, lon) or {}
 
         results: List[PlaceResult] = []
-        for item in data:
+        if data:
             try:
-                types = [t for t in (item.get("category"), item.get("type")) if t]
+                types = [t for t in (data.get("category"), data.get("type")) if t]
+                name = data.get("name") or data.get("display_name") or ""
                 results.append(
                     PlaceResult(
                         provider=self.provider,
-                        place_id=str(item.get("place_id", "")),
-                        name=item.get("display_name") or item.get("name") or "",
-                        lat=float(item.get("lat", 0.0)),
-                        lon=float(item.get("lon", 0.0)),
+                        place_id=str(data.get("place_id", "")),
+                        name=name,
+                        lat=float(data.get("lat", 0.0)),
+                        lon=float(data.get("lon", 0.0)),
                         types=types,
-                        confidence=float(item.get("importance", 0.0)),
-                        raw=item,
+                        confidence=float(data.get("importance", 1.0) or 1.0),
+                        raw=data,
                     )
                 )
             except Exception:
-                continue
+                results = []
 
         try:
             self.cache.put_places(
@@ -107,6 +103,15 @@ class PlacesClient:
             )
         except Exception:
             pass
+        self.logger.debug(
+            "PlacesClient.search_nearby: provider=%s lat=%.6f lon=%.6f radius_m=%.1f kind=%s got %d results",
+            self.provider,
+            lat,
+            lon,
+            radius,
+            kind,
+            len(results),
+        )
         return results
 
 
