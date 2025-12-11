@@ -4,7 +4,7 @@ Books API routes.
 from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db import SessionLocal
 from domain.models import Book, BookSize, PageType
@@ -128,6 +128,12 @@ class BookItineraryResponse(BaseModel):
     days: List[ItineraryDayResponse]
 
 
+class PlaceCandidateThumbnailSchema(BaseModel):
+    id: str
+    thumbnail_path: Optional[str] = None
+    file_path: Optional[str] = None
+
+
 class PlaceCandidateSchema(BaseModel):
     center_lat: float
     center_lon: float
@@ -136,6 +142,7 @@ class PlaceCandidateSchema(BaseModel):
     total_distance_km: float
     visit_count: int
     day_indices: List[int]
+    thumbnails: List[PlaceCandidateThumbnailSchema] = Field(default_factory=list)
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -328,6 +335,14 @@ async def get_book_places_debug(book_id: str):
                 total_distance_km=c.total_distance_km,
                 visit_count=c.visit_count,
                 day_indices=c.day_indices,
+                thumbnails=[
+                    PlaceCandidateThumbnailSchema(
+                        id=thumb.id,
+                        thumbnail_path=thumb.thumbnail_path,
+                        file_path=thumb.file_path,
+                    )
+                    for thumb in (c.thumbnails or [])
+                ],
             )
             for c in candidates
         ]

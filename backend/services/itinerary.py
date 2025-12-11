@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple, Sequence
 import math
@@ -20,6 +20,7 @@ from services.book_planner import _build_segments_for_day, _build_segment_summar
 
 ITINERARY_MAX_KM_PER_DAY = float(os.getenv("ITINERARY_MAX_KM_PER_DAY", "800"))
 MAX_PHOTO_DISTANCE_KM = 0.25
+MAX_THUMBS_PER_PLACE = 6
 
 
 def _classify_stop_kind(distance_km: float, duration_hours: float) -> str:
@@ -146,22 +147,25 @@ def _asset_latlon(asset: Asset) -> Optional[Tuple[float, float]]:
     return None
 
 
-def _count_photos_for_place(
+def _collect_photo_ids_for_place(
     center_lat: float,
     center_lon: float,
     photos: Sequence[Asset],
     max_distance_km: float = MAX_PHOTO_DISTANCE_KM,
-) -> int:
-    """Count photos whose GPS is within a small radius of the place center."""
-    count = 0
+) -> list[str]:
+    """Collect photo IDs whose GPS is within a small radius of the place center."""
+    ids: list[str] = []
+    seen: set[str] = set()
     for photo in photos:
         coords = _asset_latlon(photo)
         if not coords:
             continue
         plat, plon = coords
         if _haversine_km(center_lat, center_lon, plat, plon) <= max_distance_km:
-            count += 1
-    return count
+            if photo.id not in seen:
+                seen.add(photo.id)
+                ids.append(photo.id)
+    return ids
 
 
 def _score_place_candidate(place: "PlaceCandidate") -> float:
@@ -238,13 +242,19 @@ def build_place_candidates(
                     }
                 )
 
+    photo_lookup = {p.id: p for p in photos} if photos else {}
     if photos:
         for cluster in clusters:
-            cluster["total_photos"] = _count_photos_for_place(
+            photo_ids = _collect_photo_ids_for_place(
                 cluster["center_lat"],
                 cluster["center_lon"],
                 photos,
             )
+            cluster["photo_ids"] = photo_ids
+            cluster["total_photos"] = len(photo_ids)
+    else:
+        for cluster in clusters:
+            cluster["photo_ids"] = []
 
     candidates = [
         PlaceCandidate(
@@ -256,6 +266,15 @@ def build_place_candidates(
             visit_count=c["visit_count"],
             day_indices=sorted(c["day_indices"]),
             score=0.0,
+            thumbnails=[
+                PlaceCandidateThumbnail(
+                    id=pid,
+                    thumbnail_path=photo_lookup.get(pid).thumbnail_path if pid in photo_lookup else None,
+                    file_path=photo_lookup.get(pid).file_path if pid in photo_lookup else None,
+                )
+                for pid in (c.get("photo_ids") or [])[:MAX_THUMBS_PER_PLACE]
+                if pid in photo_lookup
+            ],
         )
         for c in clusters
     ]
@@ -281,6 +300,14 @@ class PlaceCandidate:
     visit_count: int
     day_indices: List[int]
     score: float = 0.0
+    thumbnails: List["PlaceCandidateThumbnail"] = field(default_factory=list)
+
+
+@dataclass
+class PlaceCandidateThumbnail:
+    id: str
+    thumbnail_path: Optional[str] = None
+    file_path: Optional[str] = None
 
 
 def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> List[ItineraryDay]:

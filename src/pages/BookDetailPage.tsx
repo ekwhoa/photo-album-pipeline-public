@@ -612,6 +612,20 @@ export default function BookDetailPage() {
                         <div className="text-xs text-muted-foreground">
                           days [{p.dayIndices.join(', ')}] • ({p.centerLat.toFixed(4)}, {p.centerLon.toFixed(4)})
                         </div>
+                        {p.thumbnails && p.thumbnails.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {p.thumbnails.map((t) =>
+                              t.thumbUrl ? (
+                                <img
+                                  key={t.id}
+                                  src={t.thumbUrl}
+                                  alt=""
+                                  className="h-12 w-12 object-cover rounded-sm border"
+                                />
+                              ) : null
+                            )}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>

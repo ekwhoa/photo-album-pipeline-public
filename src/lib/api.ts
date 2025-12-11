@@ -121,6 +121,7 @@ export interface PlaceCandidateDebug {
   totalDistanceKm: number;
   visitCount: number;
   dayIndices: number[];
+  thumbnails: { id: string; thumbUrl: string | null }[];
 }
 
 export interface BookItineraryResponse extends BookItinerary {}
@@ -165,6 +166,13 @@ export const booksApi = {
         totalDistanceKm: Number((item as any).total_distance_km ?? 0),
         visitCount: Number((item as any).visit_count ?? 0),
         dayIndices: ((item as any).day_indices as number[] | undefined) ?? [],
+        thumbnails: ((item as any).thumbnails as any[] | undefined)?.map((t) => {
+          const path = (t as any).thumbnail_path ?? (t as any).file_path ?? null;
+          return {
+            id: String((t as any).id ?? ''),
+            thumbUrl: path ? `${API_BASE_URL}/media/${path}` : null,
+          };
+        }) ?? [],
       }))
     ),
   
