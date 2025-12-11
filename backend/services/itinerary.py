@@ -266,6 +266,7 @@ def build_place_candidates(
             visit_count=c["visit_count"],
             day_indices=sorted(c["day_indices"]),
             score=0.0,
+            best_place_name=None,
             thumbnails=[
                 PlaceCandidateThumbnail(
                     id=pid,
@@ -300,6 +301,7 @@ class PlaceCandidate:
     visit_count: int
     day_indices: List[int]
     score: float = 0.0
+    best_place_name: Optional[str] = None
     thumbnails: List["PlaceCandidateThumbnail"] = field(default_factory=list)
 
 

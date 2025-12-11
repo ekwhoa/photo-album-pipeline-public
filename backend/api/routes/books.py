@@ -1,6 +1,7 @@
 """
 Books API routes.
 """
+import os
 from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, HTTPException
@@ -13,6 +14,7 @@ from storage.file_storage import FileStorage
 from services.book_planner import plan_book, get_book_segment_debug
 from services.timeline import TimelineService
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
+from services.places_client import get_default_places_client
 from services.curation import filter_approved
 
 router = APIRouter()
@@ -143,6 +145,7 @@ class PlaceCandidateSchema(BaseModel):
     visit_count: int
     day_indices: List[int]
     thumbnails: List[PlaceCandidateThumbnailSchema] = Field(default_factory=list)
+    best_place_name: Optional[str] = None
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -326,6 +329,31 @@ async def get_book_places_debug(book_id: str):
 
         itinerary_days = build_book_itinerary(book, days, approved_assets)
         candidates = build_place_candidates(itinerary_days, approved_assets)
+        lookup_enabled = os.getenv("PLACES_LOOKUP_ENABLED", "0").lower() in ("1", "true", "yes")
+        if lookup_enabled and candidates:
+            client = get_default_places_client()
+            MAX_LOOKUPS = 10
+            preferred_types = {"tourism", "attraction", "stadium", "hotel", "restaurant", "park", "museum"}
+            for cand in candidates[:MAX_LOOKUPS]:
+                try:
+                    results = client.search_nearby(
+                        lat=cand.center_lat,
+                        lon=cand.center_lon,
+                        radius_m=200.0,
+                        kind=None,
+                        max_results=5,
+                    )
+                except Exception:
+                    continue
+                if not results:
+                    continue
+                best = None
+                for r in results:
+                    if preferred_types.intersection(set(r.types or [])):
+                        best = r
+                        break
+                best = best or results[0]
+                cand.best_place_name = best.name or cand.best_place_name
         return [
             PlaceCandidateSchema(
                 center_lat=c.center_lat,
@@ -343,6 +371,7 @@ async def get_book_places_debug(book_id: str):
                     )
                     for thumb in (c.thumbnails or [])
                 ],
+                best_place_name=c.best_place_name,
             )
             for c in candidates
         ]
