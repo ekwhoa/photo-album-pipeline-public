@@ -14,7 +14,7 @@ from storage.file_storage import FileStorage
 from services.book_planner import plan_book, get_book_segment_debug
 from services.timeline import TimelineService
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
-from services.places_client import get_default_places_client
+from services.places_enrichment import enrich_place_candidates_with_names
 from services.curation import filter_approved
 from settings import settings
 
@@ -332,30 +332,9 @@ async def get_book_places_debug(book_id: str):
         itinerary_days = build_book_itinerary(book, days, approved_assets)
         candidates = build_place_candidates(itinerary_days, approved_assets)
         if settings.PLACES_LOOKUP_ENABLED and candidates:
-            client = get_default_places_client()
             MAX_LOOKUPS = 10
-            preferred_types = {"tourism", "attraction", "stadium", "hotel", "restaurant", "park", "museum"}
             logger.debug("places-debug: enriching top %d places with Nominatim", min(len(candidates), MAX_LOOKUPS))
-            for cand in candidates[:MAX_LOOKUPS]:
-                try:
-                    results = client.search_nearby(
-                        lat=cand.center_lat,
-                        lon=cand.center_lon,
-                        radius_m=200.0,
-                        kind=None,
-                        max_results=5,
-                    )
-                except Exception:
-                    continue
-                if not results:
-                    continue
-                best = None
-                for r in results:
-                    if preferred_types.intersection(set(r.types or [])):
-                        best = r
-                        break
-                best = best or results[0]
-                cand.best_place_name = best.name or cand.best_place_name
+            candidates = enrich_place_candidates_with_names(candidates, max_lookups=MAX_LOOKUPS)
         return [
             PlaceCandidateSchema(
                 center_lat=c.center_lat,

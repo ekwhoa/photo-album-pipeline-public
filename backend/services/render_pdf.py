@@ -18,7 +18,8 @@ from services.blurb_engine import (
     build_day_intro_tagline,
 )
 from services.geocoding import compute_centroid, reverse_geocode_label
-from services.itinerary import build_book_itinerary
+from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
+from services.places_enrichment import enrich_place_candidates_with_names
 from services.manifest import build_manifest
 from services.timeline import build_days_and_events
 logger = logging.getLogger(__name__)
@@ -94,6 +95,26 @@ def _location_label_for_segments(segments: Iterable[Dict[str, Any]]) -> Optional
         return None
     place = reverse_geocode_label(*centroid)
     return place.short_label if place else None
+
+
+MAX_NOTABLE_PLACES = 5
+
+
+def _format_place_label(place: PlaceCandidate) -> str:
+    """Derive a compact display label for a place."""
+    if getattr(place, "best_place_name", None):
+        name = str(place.best_place_name).split(",")[0].strip()
+        if name:
+            return name if len(name) <= 50 else f"{name[:47].rstrip()}..."
+    return f"{place.center_lat:.4f}, {place.center_lon:.4f}"
+
+
+def _build_notable_places(place_candidates: List[PlaceCandidate]) -> List[PlaceCandidate]:
+    candidates = place_candidates or []
+    if len(candidates) > MAX_NOTABLE_PLACES:
+        candidates = candidates[:MAX_NOTABLE_PLACES]
+    candidates = enrich_place_candidates_with_names(candidates, max_lookups=len(candidates))
+    return candidates
 
 
 def _build_trip_route_markers(itinerary: Any) -> List[RouteMarker]:
@@ -362,8 +383,10 @@ def _generate_book_html(
         manifest = build_manifest(book.id, asset_list)
         days = build_days_and_events(manifest)
         itinerary_days = build_book_itinerary(book, days, asset_list)
+        place_candidates = build_place_candidates(itinerary_days, asset_list)
     except Exception:
         itinerary_days = []
+        place_candidates = []
 
     def _layout_has_photos(layout: PageLayout) -> bool:
         elements = getattr(layout, "elements", None) or []
@@ -393,6 +416,7 @@ def _generate_book_html(
         )
         if layout.page_type == PageType.TRIP_SUMMARY:
             setattr(layout, "itinerary_days", itinerary_days)
+            setattr(layout, "place_candidates", place_candidates)
         if itinerary_days:
             if layout.page_type == PageType.MAP_ROUTE:
                 setattr(layout, "itinerary_days", itinerary_days)
@@ -855,6 +879,8 @@ def _render_trip_summary_card(
     location_label = _location_label_for_segments(getattr(layout, "segments", None) or [])
 
     itinerary_days = getattr(layout, "itinerary_days", None) or []
+    place_candidates = getattr(layout, "place_candidates", None) or []
+    notable_places = _build_notable_places(place_candidates)
 
     def fmt_date(date_iso: str) -> str:
         try:
@@ -966,6 +992,23 @@ def _render_trip_summary_card(
             .trip-summary-stats span + span {{
                 margin-left: 6px;
             }}
+            .trip-notable-places {{
+                margin-top: 10px;
+                font-size: 10pt;
+                color: #374151;
+            }}
+            .trip-notable-places-title {{
+                font-weight: 600;
+                margin-bottom: 4px;
+            }}
+            .trip-notable-places-list {{
+                list-style: disc;
+                padding-left: 18px;
+                margin: 0;
+            }}
+            .trip-notable-places-list li + li {{
+                margin-top: 2px;
+            }}
             .trip-summary-days {{
                 margin-top: 12px;
             }}
@@ -995,6 +1038,14 @@ def _render_trip_summary_card(
                 {f'<div class="trip-summary-blurb">{blurb}</div>' if blurb else ''}
                 {f'<div class="trip-summary-stats">' + ' '.join([f'<span>{part}</span>' for part in stats_line_parts]) + '</div>' if stats_line_parts else ''}
             </header>
+            {f'''
+            <div class="trip-notable-places">
+                <div class="trip-notable-places-title">Notable places</div>
+                <ul class="trip-notable-places-list">
+                    {''.join(f'<li>{_format_place_label(p)}</li>' for p in notable_places)}
+                </ul>
+            </div>
+            ''' if notable_places else ''}
             {day_rows}
         </section>
     </div>
