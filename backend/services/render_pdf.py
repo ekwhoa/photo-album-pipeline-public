@@ -176,13 +176,17 @@ def _build_trip_place_markers(place_candidates: Iterable[PlaceCandidate]) -> Lis
     """
     markers: List[RouteMarker] = []
     candidates = list(place_candidates or [])
+    print(f"[PLACE_MARKERS] _build_trip_place_markers: {len(candidates)} candidates received")
     # Candidates are already sorted by score descending from build_place_candidates
     for c in candidates:
         if c.total_photos < 1:
+            print(f"[PLACE_MARKERS]   skipping candidate at ({c.center_lat:.4f}, {c.center_lon:.4f}) with {c.total_photos} photos")
             continue
         markers.append(RouteMarker(lat=c.center_lat, lon=c.center_lon, kind="place"))
+        print(f"[PLACE_MARKERS]   added marker at ({c.center_lat:.4f}, {c.center_lon:.4f}) photos={c.total_photos}")
         if len(markers) >= MAX_TRIP_PLACE_MARKERS:
             break
+    print(f"[PLACE_MARKERS] _build_trip_place_markers: returning {len(markers)} markers")
     return markers
 
 
@@ -193,14 +197,19 @@ def _build_day_place_markers(day_index: int, place_candidates: Iterable[PlaceCan
     """
     markers: List[RouteMarker] = []
     candidates = list(place_candidates or [])
+    print(f"[PLACE_MARKERS] _build_day_place_markers: day_index={day_index}, {len(candidates)} candidates received")
     for c in candidates:
         if c.total_photos < 1:
+            print(f"[PLACE_MARKERS]   day {day_index}: skipping ({c.center_lat:.4f}, {c.center_lon:.4f}) - no photos")
             continue
         if day_index not in (c.day_indices or []):
+            print(f"[PLACE_MARKERS]   day {day_index}: skipping ({c.center_lat:.4f}, {c.center_lon:.4f}) - not in day_indices {c.day_indices}")
             continue
         markers.append(RouteMarker(lat=c.center_lat, lon=c.center_lon, kind="place"))
+        print(f"[PLACE_MARKERS]   day {day_index}: added marker at ({c.center_lat:.4f}, {c.center_lon:.4f})")
         if len(markers) >= MAX_DAY_PLACE_MARKERS:
             break
+    print(f"[PLACE_MARKERS] _build_day_place_markers: returning {len(markers)} markers for day {day_index}")
     return markers
 
 
