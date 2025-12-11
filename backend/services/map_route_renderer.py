@@ -70,6 +70,10 @@ ROUTE_POI_TRAVEL_OUTLINE = (70, 70, 70, 220)
 ROUTE_CANVAS_PADDING_PX = 24
 LEGEND_MARGIN_PX = 16
 TILE_DARKEN_OVERLAY = (0, 0, 0, 170)
+MARKER_RADIUS_LOCAL = 6
+MARKER_RADIUS_TRAVEL = 4
+MARKER_OUTLINE_WIDTH_LOCAL = 3
+MARKER_OUTLINE_WIDTH_TRAVEL = 2
 
 
 @dataclass
@@ -592,15 +596,15 @@ def _render_route_image(
             if marker_coords_scaled:
                 for marker, (mx, my) in zip(markers or [], marker_coords_scaled):
                     if marker.kind == "local":
-                        radius = 4
+                        radius = MARKER_RADIUS_LOCAL
                         fill = (255, 255, 255, 255)
                         outline = (60, 60, 60, 255)
-                        stroke_width = 2
+                        stroke_width = MARKER_OUTLINE_WIDTH_LOCAL
                     else:
-                        radius = 3
+                        radius = MARKER_RADIUS_TRAVEL
                         fill = (230, 230, 230, 255)
                         outline = (80, 80, 80, 255)
-                        stroke_width = 1
+                        stroke_width = MARKER_OUTLINE_WIDTH_TRAVEL
                     r_scaled = int(radius * UPSCALE_FACTOR)
                     stroke_scaled = max(1, int(stroke_width * UPSCALE_FACTOR))
                     marker_bbox = (mx - r_scaled, my - r_scaled, mx + r_scaled, my + r_scaled)

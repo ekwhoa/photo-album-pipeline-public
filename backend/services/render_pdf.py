@@ -1153,10 +1153,13 @@ def _render_day_intro(
     segments = getattr(layout, "segments", None) or []
     day_markers = _build_day_route_markers(getattr(layout, "itinerary_day", None))
     if layout.book_id and segments:
-        rel_path, abs_path = map_route_renderer.render_day_route_map(
+        rel_path, abs_path = map_route_renderer.render_day_route_image(
             layout.book_id,
             segments,
             markers=day_markers,
+            width=800,
+            height=360,
+            filename_prefix=f"day_{layout.page_index}_route",
         )
         if rel_path or abs_path:
             if mode == "pdf":
