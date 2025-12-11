@@ -164,6 +164,20 @@ def _count_photos_for_place(
     return count
 
 
+def _score_place_candidate(place: "PlaceCandidate") -> float:
+    """Compute a simple importance score for sorting/debug purposes."""
+    visits_weight = 2.0
+    photos_weight = 0.1
+    duration_weight = 1.0
+    distance_weight = 0.05
+    return (
+        visits_weight * (place.visit_count or 0)
+        + photos_weight * (place.total_photos or 0)
+        + duration_weight * (place.total_duration_hours or 0.0)
+        + distance_weight * (place.total_distance_km or 0.0)
+    )
+
+
 def build_place_candidates(
     itinerary: List[ItineraryDay],
     photos: Optional[Sequence[Asset]] = None,
@@ -241,16 +255,15 @@ def build_place_candidates(
             total_distance_km=c["total_distance_km"],
             visit_count=c["visit_count"],
             day_indices=sorted(c["day_indices"]),
+            score=0.0,
         )
         for c in clusters
     ]
 
-    candidates.sort(
-        key=lambda c: (
-            -(c.total_duration_hours or 0.0),
-            -(c.total_photos or 0),
-        )
-    )
+    for candidate in candidates:
+        candidate.score = _score_place_candidate(candidate)
+
+    candidates.sort(key=lambda c: c.score, reverse=True)
 
     MAX_CANDIDATES = 50
     if len(candidates) > MAX_CANDIDATES:
@@ -267,6 +280,7 @@ class PlaceCandidate:
     total_distance_km: float
     visit_count: int
     day_indices: List[int]
+    score: float = 0.0
 
 
 def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> List[ItineraryDay]:
