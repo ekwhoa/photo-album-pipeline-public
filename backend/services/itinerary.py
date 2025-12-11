@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Sequence
 import math
 
 from domain.models import (
@@ -19,6 +19,7 @@ from services.book_planner import _build_segments_for_day, _build_segment_summar
 
 
 ITINERARY_MAX_KM_PER_DAY = float(os.getenv("ITINERARY_MAX_KM_PER_DAY", "800"))
+MAX_PHOTO_DISTANCE_KM = 0.25
 
 
 def _classify_stop_kind(distance_km: float, duration_hours: float) -> str:
@@ -129,13 +130,51 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
-def build_place_candidates(itinerary: List[ItineraryDay]) -> List[PlaceCandidate]:
+def _asset_latlon(asset: Asset) -> Optional[Tuple[float, float]]:
+    """Extract a usable lat/lon from asset metadata if present."""
+    if not asset or not asset.metadata:
+        return None
+    lat = asset.metadata.gps_lat
+    lon = asset.metadata.gps_lon
+    if lat is not None and lon is not None:
+        return float(lat), float(lon)
+    loc = asset.metadata.location or {}
+    lat = loc.get("lat")
+    lon = loc.get("lon") if "lon" in loc else loc.get("lng")
+    if lat is not None and lon is not None:
+        return float(lat), float(lon)
+    return None
+
+
+def _count_photos_for_place(
+    center_lat: float,
+    center_lon: float,
+    photos: Sequence[Asset],
+    max_distance_km: float = MAX_PHOTO_DISTANCE_KM,
+) -> int:
+    """Count photos whose GPS is within a small radius of the place center."""
+    count = 0
+    for photo in photos:
+        coords = _asset_latlon(photo)
+        if not coords:
+            continue
+        plat, plon = coords
+        if _haversine_km(center_lat, center_lon, plat, plon) <= max_distance_km:
+            count += 1
+    return count
+
+
+def build_place_candidates(
+    itinerary: List[ItineraryDay],
+    photos: Optional[Sequence[Asset]] = None,
+) -> List[PlaceCandidate]:
     """
     Aggregate nearby local stops into candidate places for future POI labeling.
     """
     clusters: List[dict] = []
     if not itinerary:
         return []
+    photos = photos or []
 
     for idx, day in enumerate(itinerary):
         day_index = getattr(day, "day_index", idx + 1)
@@ -155,7 +194,6 @@ def build_place_candidates(itinerary: List[ItineraryDay]) -> List[PlaceCandidate
             lat, lon = centroid
             duration = getattr(stop, "duration_hours", None) or 0.0
             distance = getattr(stop, "distance_km", None) or 0.0
-            photos = len(getattr(stop, "photos", None) or [])
 
             merged = False
             for cluster in clusters:
@@ -167,7 +205,6 @@ def build_place_candidates(itinerary: List[ItineraryDay]) -> List[PlaceCandidate
                     cluster["center_lon"] = (cluster["center_lon"] * count + lon) / new_count
                     cluster["total_duration_hours"] += duration
                     cluster["total_distance_km"] += distance
-                    cluster["total_photos"] += photos
                     cluster["visit_count"] = new_count
                     if day_index not in cluster["day_indices"]:
                         cluster["day_indices"].append(day_index)
@@ -180,12 +217,20 @@ def build_place_candidates(itinerary: List[ItineraryDay]) -> List[PlaceCandidate
                         "center_lat": lat,
                         "center_lon": lon,
                         "total_duration_hours": duration,
-                        "total_photos": photos,
+                        "total_photos": 0,
                         "total_distance_km": distance,
                         "visit_count": 1,
                         "day_indices": [day_index],
                     }
                 )
+
+    if photos:
+        for cluster in clusters:
+            cluster["total_photos"] = _count_photos_for_place(
+                cluster["center_lat"],
+                cluster["center_lon"],
+                photos,
+            )
 
     candidates = [
         PlaceCandidate(

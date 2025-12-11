@@ -318,7 +318,7 @@ async def get_book_places_debug(book_id: str):
         days = timeline_service.organize_assets_by_day(approved_assets)
 
         itinerary_days = build_book_itinerary(book, days, approved_assets)
-        candidates = build_place_candidates(itinerary_days)
+        candidates = build_place_candidates(itinerary_days, approved_assets)
         return [
             PlaceCandidateSchema(
                 center_lat=c.center_lat,
