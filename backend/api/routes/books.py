@@ -12,7 +12,7 @@ from repositories import BooksRepository, AssetsRepository
 from storage.file_storage import FileStorage
 from services.book_planner import plan_book, get_book_segment_debug
 from services.timeline import TimelineService
-from services.itinerary import build_book_itinerary
+from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.curation import filter_approved
 
 router = APIRouter()
@@ -126,6 +126,16 @@ class ItineraryDayResponse(BaseModel):
 class BookItineraryResponse(BaseModel):
     book_id: str
     days: List[ItineraryDayResponse]
+
+
+class PlaceCandidateSchema(BaseModel):
+    center_lat: float
+    center_lon: float
+    total_duration_hours: float
+    total_photos: int
+    total_distance_km: float
+    visit_count: int
+    day_indices: List[int]
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -289,6 +299,38 @@ async def itinerary(book_id: str):
         ]
 
         return BookItineraryResponse(book_id=book.id, days=response_days)
+
+
+@router.get(
+    "/{book_id}/places-debug",
+    response_model=List[PlaceCandidateSchema],
+)
+async def get_book_places_debug(book_id: str):
+    """Debug endpoint: aggregate place candidates from itinerary data."""
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        approved_assets = assets_repo.list_assets(session, book_id, status=None)
+        approved_assets = filter_approved(approved_assets)
+        timeline_service = TimelineService()
+        days = timeline_service.organize_assets_by_day(approved_assets)
+
+        itinerary_days = build_book_itinerary(book, days, approved_assets)
+        candidates = build_place_candidates(itinerary_days)
+        return [
+            PlaceCandidateSchema(
+                center_lat=c.center_lat,
+                center_lon=c.center_lon,
+                total_duration_hours=c.total_duration_hours,
+                total_photos=c.total_photos,
+                total_distance_km=c.total_distance_km,
+                visit_count=c.visit_count,
+                day_indices=c.day_indices,
+            )
+            for c in candidates
+        ]
 
 
 @router.get("", response_model=List[BookResponse])

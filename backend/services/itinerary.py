@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional, Tuple
+import math
 
 from domain.models import (
     Asset,
@@ -110,6 +112,116 @@ def _is_reasonable_day_distance_km(total_km: Optional[float]) -> bool:
     if total_km < 0:
         return False
     return total_km <= ITINERARY_MAX_KM_PER_DAY
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute distance in kilometers between two lat/lon points."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def build_place_candidates(itinerary: List[ItineraryDay]) -> List[PlaceCandidate]:
+    """
+    Aggregate nearby local stops into candidate places for future POI labeling.
+    """
+    clusters: List[dict] = []
+    if not itinerary:
+        return []
+
+    for idx, day in enumerate(itinerary):
+        day_index = getattr(day, "day_index", idx + 1)
+        stops = getattr(day, "stops", None) or []
+        for stop in stops:
+            if getattr(stop, "kind", None) != "local":
+                continue
+            polyline = getattr(stop, "polyline", None)
+            if not polyline:
+                continue
+            centroid = compute_centroid(polyline)
+            if centroid is None:
+                try:
+                    centroid = polyline[0]
+                except Exception:
+                    continue
+            lat, lon = centroid
+            duration = getattr(stop, "duration_hours", None) or 0.0
+            distance = getattr(stop, "distance_km", None) or 0.0
+            photos = len(getattr(stop, "photos", None) or [])
+
+            merged = False
+            for cluster in clusters:
+                dist_km = _haversine_km(lat, lon, cluster["center_lat"], cluster["center_lon"])
+                if dist_km <= 0.1:
+                    count = cluster["visit_count"]
+                    new_count = count + 1
+                    cluster["center_lat"] = (cluster["center_lat"] * count + lat) / new_count
+                    cluster["center_lon"] = (cluster["center_lon"] * count + lon) / new_count
+                    cluster["total_duration_hours"] += duration
+                    cluster["total_distance_km"] += distance
+                    cluster["total_photos"] += photos
+                    cluster["visit_count"] = new_count
+                    if day_index not in cluster["day_indices"]:
+                        cluster["day_indices"].append(day_index)
+                    merged = True
+                    break
+
+            if not merged:
+                clusters.append(
+                    {
+                        "center_lat": lat,
+                        "center_lon": lon,
+                        "total_duration_hours": duration,
+                        "total_photos": photos,
+                        "total_distance_km": distance,
+                        "visit_count": 1,
+                        "day_indices": [day_index],
+                    }
+                )
+
+    candidates = [
+        PlaceCandidate(
+            center_lat=c["center_lat"],
+            center_lon=c["center_lon"],
+            total_duration_hours=c["total_duration_hours"],
+            total_photos=c["total_photos"],
+            total_distance_km=c["total_distance_km"],
+            visit_count=c["visit_count"],
+            day_indices=sorted(c["day_indices"]),
+        )
+        for c in clusters
+    ]
+
+    candidates.sort(
+        key=lambda c: (
+            -(c.total_duration_hours or 0.0),
+            -(c.total_photos or 0),
+        )
+    )
+
+    MAX_CANDIDATES = 50
+    if len(candidates) > MAX_CANDIDATES:
+        candidates = candidates[:MAX_CANDIDATES]
+    return candidates
+
+
+@dataclass
+class PlaceCandidate:
+    center_lat: float
+    center_lon: float
+    total_duration_hours: float
+    total_photos: int
+    total_distance_km: float
+    visit_count: int
+    day_indices: List[int]
 
 
 def build_book_itinerary(book: Book, days: List[Day], assets: List[Asset]) -> List[ItineraryDay]:
