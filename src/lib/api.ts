@@ -122,6 +122,7 @@ export interface PlaceCandidateDebug {
   visitCount: number;
   dayIndices: number[];
   thumbnails: { id: string; thumbUrl: string | null }[];
+  bestPlaceName?: string;
 }
 
 export interface BookItineraryResponse extends BookItinerary {}
@@ -173,6 +174,7 @@ export const booksApi = {
             thumbUrl: path ? `${API_BASE_URL}/media/${path}` : null,
           };
         }) ?? [],
+        bestPlaceName: (item as any).best_place_name,
       }))
     ),
   

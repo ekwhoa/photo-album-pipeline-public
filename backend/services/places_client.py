@@ -28,6 +28,22 @@ class PlacesClient:
         self.default_radius_m = default_radius_m
         self.logger = logging.getLogger(__name__)
 
+    def _score_raw_result(self, item: dict) -> tuple:
+        venue_classes = {"amenity", "tourism", "leisure", "shop", "place"}
+        venue_types = {"restaurant", "bar", "pub", "cafe", "stadium", "theatre", "attraction"}
+        has_name = bool(item.get("name"))
+        cls = item.get("class")
+        typ = item.get("type")
+        is_venue_class = cls in venue_classes
+        is_venue_type = typ in venue_types
+        importance = float(item.get("importance", 0.0) or 0.0)
+        return (
+            1 if has_name else 0,
+            1 if is_venue_class else 0,
+            1 if is_venue_type else 0,
+            importance,
+        )
+
     def _reverse_lookup(self, lat: float, lon: float, zoom: int = 18) -> Optional[dict]:
         params = {
             "format": "jsonv2",
@@ -74,20 +90,23 @@ class PlacesClient:
         results: List[PlaceResult] = []
         if data:
             try:
-                types = [t for t in (data.get("category"), data.get("type")) if t]
-                name = data.get("name") or data.get("display_name") or ""
-                results.append(
-                    PlaceResult(
-                        provider=self.provider,
-                        place_id=str(data.get("place_id", "")),
-                        name=name,
-                        lat=float(data.get("lat", 0.0)),
-                        lon=float(data.get("lon", 0.0)),
-                        types=types,
-                        confidence=float(data.get("importance", 1.0) or 1.0),
-                        raw=data,
+                candidates = data if isinstance(data, list) else [data]
+                candidates_sorted = sorted(candidates, key=self._score_raw_result, reverse=True)
+                for item in candidates_sorted[:max_results]:
+                    types = [t for t in (item.get("category"), item.get("type")) if t]
+                    name = item.get("name") or item.get("display_name") or ""
+                    results.append(
+                        PlaceResult(
+                            provider=self.provider,
+                            place_id=str(item.get("place_id", "")),
+                            name=name,
+                            lat=float(item.get("lat", 0.0)),
+                            lon=float(item.get("lon", 0.0)),
+                            types=types,
+                            confidence=float(item.get("importance", 1.0) or 1.0),
+                            raw=item,
+                        )
                     )
-                )
             except Exception:
                 results = []
 

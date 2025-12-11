@@ -602,6 +602,17 @@ export default function BookDetailPage() {
                   <ul className="text-sm text-foreground space-y-1">
                     {placesDebug.map((p, idx) => (
                       <li key={idx} className="flex flex-col rounded border bg-muted/40 px-2 py-1">
+                        {(() => {
+                          const formatPlaceName = (raw?: string) => {
+                            if (!raw) return undefined;
+                            const first = raw.split(',')[0].trim();
+                            if (!first) return undefined;
+                            return first.length > 50 ? `${first.slice(0, 47).trimEnd()}…` : first;
+                          };
+                          const shortName = formatPlaceName(p.bestPlaceName);
+                          if (!shortName) return null;
+                          return <div className="text-sm font-semibold text-foreground">{shortName}</div>;
+                        })()}
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span className="font-mono text-foreground">{idx + 1}.</span>
                           <span>
