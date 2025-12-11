@@ -74,13 +74,17 @@ MARKER_RADIUS_LOCAL = 6
 MARKER_RADIUS_TRAVEL = 4
 MARKER_OUTLINE_WIDTH_LOCAL = 3
 MARKER_OUTLINE_WIDTH_TRAVEL = 2
+MARKER_RADIUS_PLACE = 4
+MARKER_OUTLINE_WIDTH_PLACE = 2
+PLACE_MARKER_FILL = (255, 255, 255, 255)
+PLACE_MARKER_OUTLINE = (100, 100, 100, 255)
 
 
 @dataclass
 class RouteMarker:
     lat: float
     lon: float
-    kind: str  # e.g. "local" or "travel"
+    kind: str  # e.g. "local", "travel", or "place"
 
 # TODO(map-v2): explore further smoothing/anti-aliasing for extreme zoom levels,
 # or switching to an SVG/vector-based route renderer if we ever need ultra-high DPI.
@@ -600,6 +604,11 @@ def _render_route_image(
                         fill = (255, 255, 255, 255)
                         outline = (60, 60, 60, 255)
                         stroke_width = MARKER_OUTLINE_WIDTH_LOCAL
+                    elif marker.kind == "place":
+                        radius = MARKER_RADIUS_PLACE
+                        fill = PLACE_MARKER_FILL
+                        outline = PLACE_MARKER_OUTLINE
+                        stroke_width = MARKER_OUTLINE_WIDTH_PLACE
                     else:
                         radius = MARKER_RADIUS_TRAVEL
                         fill = (230, 230, 230, 255)

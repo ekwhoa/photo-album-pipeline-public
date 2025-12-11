@@ -170,7 +170,9 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
 }
 
 function getLayoutVariant(page: BookPage | null | undefined): GridLayoutVariant | null {
-  return page?.layout_variant ?? null;
+  const variant = page?.layout_variant;
+  if (!variant) return null;
+  return variant as GridLayoutVariant;
 }
 
 function PhotoGridPreview({ page, assetMap }: { page: BookPage; assetMap: Record<string, Asset> }) {

@@ -163,6 +163,47 @@ def _build_day_route_markers(day: Any) -> List[RouteMarker]:
     return markers
 
 
+MAX_TRIP_PLACE_MARKERS = 10
+MAX_DAY_PLACE_MARKERS = 5
+
+
+def _build_trip_place_markers(place_candidates: Iterable[PlaceCandidate]) -> List[RouteMarker]:
+    """
+    Return up to MAX_TRIP_PLACE_MARKERS RouteMarker objects for the trip route map.
+    Uses the same scoring/ordering as the places debug UI:
+    - Prefer candidates with higher score (more photos and duration).
+    - Only include candidates that have at least 1 photo.
+    """
+    markers: List[RouteMarker] = []
+    candidates = list(place_candidates or [])
+    # Candidates are already sorted by score descending from build_place_candidates
+    for c in candidates:
+        if c.total_photos < 1:
+            continue
+        markers.append(RouteMarker(lat=c.center_lat, lon=c.center_lon, kind="place"))
+        if len(markers) >= MAX_TRIP_PLACE_MARKERS:
+            break
+    return markers
+
+
+def _build_day_place_markers(day_index: int, place_candidates: Iterable[PlaceCandidate]) -> List[RouteMarker]:
+    """
+    Return up to MAX_DAY_PLACE_MARKERS RouteMarker objects for this specific day.
+    Only include candidates whose day_indices include this day_index.
+    """
+    markers: List[RouteMarker] = []
+    candidates = list(place_candidates or [])
+    for c in candidates:
+        if c.total_photos < 1:
+            continue
+        if day_index not in (c.day_indices or []):
+            continue
+        markers.append(RouteMarker(lat=c.center_lat, lon=c.center_lon, kind="place"))
+        if len(markers) >= MAX_DAY_PLACE_MARKERS:
+            break
+    return markers
+
+
 def render_book_to_pdf(
     book: Book,
     layouts: List[PageLayout],
@@ -420,6 +461,7 @@ def _generate_book_html(
         if itinerary_days:
             if layout.page_type == PageType.MAP_ROUTE:
                 setattr(layout, "itinerary_days", itinerary_days)
+                setattr(layout, "place_candidates", place_candidates)
                 if not getattr(layout, "book_id", None):
                     setattr(layout, "book_id", getattr(book, "id", None))
             if layout.page_type == PageType.DAY_INTRO:
@@ -432,6 +474,8 @@ def _generate_book_html(
                             day_match = day
                             break
                 setattr(layout, "itinerary_day", day_match)
+                setattr(layout, "place_candidates", place_candidates)
+                setattr(layout, "day_index", day_idx)
                 if not getattr(layout, "book_id", None):
                     setattr(layout, "book_id", getattr(book, "id", None))
         page_html = _render_page_html(
@@ -713,12 +757,14 @@ def _render_map_route_card(
 
     segments = getattr(layout, "segments", []) or []
     trip_markers = _build_trip_route_markers(getattr(layout, "itinerary_days", None))
+    place_markers = _build_trip_place_markers(getattr(layout, "place_candidates", None) or [])
+    all_markers = trip_markers + place_markers
     route_points = _points_from_segments(segments)
     if layout.book_id and route_points:
         trip_rel_path, trip_abs_path = map_route_renderer.render_trip_route_map(
             layout.book_id,
             route_points,
-            markers=trip_markers,
+            markers=all_markers,
         )
         if trip_rel_path or trip_abs_path:
             if mode == "pdf":
@@ -1203,11 +1249,16 @@ def _render_day_intro(
     mini_route_src = ""
     segments = getattr(layout, "segments", None) or []
     day_markers = _build_day_route_markers(getattr(layout, "itinerary_day", None))
+    day_idx = getattr(layout, "day_index", None)
+    place_markers = []
+    if day_idx is not None:
+        place_markers = _build_day_place_markers(day_idx, getattr(layout, "place_candidates", None) or [])
+    all_markers = day_markers + place_markers
     if layout.book_id and segments:
         rel_path, abs_path = map_route_renderer.render_day_route_image(
             layout.book_id,
             segments,
-            markers=day_markers,
+            markers=all_markers,
             width=800,
             height=360,
             filename_prefix=f"day_{layout.page_index}_route",
