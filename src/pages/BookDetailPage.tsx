@@ -36,6 +36,7 @@ import {
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
+import { useBookPlacesDebug } from '@/hooks/useBookPlacesDebug';
 import { useBookItinerary } from '@/hooks/useBookItinerary';
 import { toast } from 'sonner';
 
@@ -58,6 +59,11 @@ export default function BookDetailPage() {
   const [showClusters, setShowClusters] = useState(false);
   const dedupe = useBookDedupeDebug(id);
   const segments = useBookSegmentDebug(id);
+  const {
+    data: placesDebug,
+    loading: placesLoading,
+    error: placesError,
+  } = useBookPlacesDebug(id);
   const itinerary = useBookItinerary(id);
   const [expandedSegmentDays, setExpandedSegmentDays] = useState<Set<number>>(new Set());
 
@@ -573,6 +579,42 @@ export default function BookDetailPage() {
                       </span>
                     )}
                   </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between">
+                <div>
+                  <CardTitle>Places (debug)</CardTitle>
+                  <CardDescription>Aggregated local stop candidates.</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {placesLoading && <p className="text-sm text-muted-foreground">Loading places…</p>}
+                {placesError && (
+                  <p className="text-sm text-destructive">Failed to load places debug.</p>
+                )}
+                {!placesLoading && !placesError && placesDebug && placesDebug.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No place candidates.</p>
+                )}
+                {!placesLoading && !placesError && placesDebug && placesDebug.length > 0 && (
+                  <ul className="text-sm text-foreground space-y-1">
+                    {placesDebug.map((p, idx) => (
+                      <li key={idx} className="flex flex-col rounded border bg-muted/40 px-2 py-1">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span className="font-mono text-foreground">{idx + 1}.</span>
+                          <span>
+                            {p.visitCount} visits • {p.totalPhotos} photos • {p.totalDurationHours.toFixed(1)} h •{' '}
+                            {p.totalDistanceKm.toFixed(1)} km
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          days [{p.dayIndices.join(', ')}] • ({p.centerLat.toFixed(4)}, {p.centerLon.toFixed(4)})
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </CardContent>
             </Card>

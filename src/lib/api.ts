@@ -113,6 +113,16 @@ export interface BookSegmentDebugResponse {
   days: SegmentDebugDay[];
 }
 
+export interface PlaceCandidateDebug {
+  centerLat: number;
+  centerLon: number;
+  totalDurationHours: number;
+  totalPhotos: number;
+  totalDistanceKm: number;
+  visitCount: number;
+  dayIndices: number[];
+}
+
 export interface BookItineraryResponse extends BookItinerary {}
 
 async function apiRequest<T>(
@@ -145,6 +155,18 @@ export const booksApi = {
   getDedupeDebug: (id: string) => apiRequest<BookDedupeDebug>(`/books/${id}/dedupe_debug`),
   getSegmentDebug: (id: string) => apiRequest<BookSegmentDebugResponse>(`/books/${id}/segment_debug`),
   getItinerary: (id: string) => apiRequest<BookItinerary>(`/books/${id}/itinerary`),
+  getPlacesDebug: (id: string): Promise<PlaceCandidateDebug[]> =>
+    apiRequest<unknown[]>(`/books/${id}/places-debug`).then((data) =>
+      (data || []).map((item) => ({
+        centerLat: Number((item as any).center_lat ?? 0),
+        centerLon: Number((item as any).center_lon ?? 0),
+        totalDurationHours: Number((item as any).total_duration_hours ?? 0),
+        totalPhotos: Number((item as any).total_photos ?? 0),
+        totalDistanceKm: Number((item as any).total_distance_km ?? 0),
+        visitCount: Number((item as any).visit_count ?? 0),
+        dayIndices: ((item as any).day_indices as number[] | undefined) ?? [],
+      }))
+    ),
   
   create: (data: { title: string; size: string }) =>
     apiRequest<Book>('/books', {
