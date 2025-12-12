@@ -213,6 +213,61 @@ def _build_day_place_markers(day_index: int, place_candidates: Iterable[PlaceCan
     return markers
 
 
+def _format_place_name_for_display(candidate: PlaceCandidate) -> str:
+    """
+    Format a single PlaceCandidate for display text.
+    Uses best_place_name if available, otherwise falls back to coordinates.
+    """
+    if candidate.best_place_name and candidate.best_place_name.strip():
+        return candidate.best_place_name.strip()
+    # Fallback to coordinates
+    return f"({candidate.center_lat:.4f}, {candidate.center_lon:.4f})"
+
+
+def _build_trip_place_names(place_candidates: Iterable[PlaceCandidate], max_count: int = MAX_TRIP_PLACE_MARKERS) -> str:
+    """
+    Return a formatted string of place names for the trip route page.
+    E.g., "Highlighted places: Chicago, Millennium Park, Museum Campus"
+    
+    Only includes candidates with at least 1 photo, respecting the same limits as place markers.
+    Returns an empty string if no candidates qualify.
+    """
+    candidates = list(place_candidates or [])
+    names: List[str] = []
+    for c in candidates:
+        if c.total_photos < 1:
+            continue
+        names.append(_format_place_name_for_display(c))
+        if len(names) >= max_count:
+            break
+    if not names:
+        return ""
+    return "Highlighted places: " + ", ".join(names)
+
+
+def _build_day_place_names(day_index: int, place_candidates: Iterable[PlaceCandidate], max_count: int = MAX_DAY_PLACE_MARKERS) -> str:
+    """
+    Return a formatted string of place names for a specific day intro page.
+    E.g., "Places today: The Bean, Chicago Riverwalk"
+    
+    Only includes candidates for that day with at least 1 photo.
+    Returns an empty string if no candidates qualify.
+    """
+    candidates = list(place_candidates or [])
+    names: List[str] = []
+    for c in candidates:
+        if c.total_photos < 1:
+            continue
+        if day_index not in (c.day_indices or []):
+            continue
+        names.append(_format_place_name_for_display(c))
+        if len(names) >= max_count:
+            break
+    if not names:
+        return ""
+    return "Places today: " + ", ".join(names)
+
+
 def render_book_to_pdf(
     book: Book,
     layouts: List[PageLayout],
@@ -789,6 +844,9 @@ def _render_map_route_card(
     seg_summary = format_day_segment_summary(seg_count, seg_total_hours, seg_total_km)
     stats_line = stats_from_elements or seg_summary
 
+    # Build place names text for trip route
+    place_names_line = _build_trip_place_names(getattr(layout, "place_candidates", None) or [])
+
     figure_html = ""
     if image_src:
         figure_html = f"""
@@ -839,6 +897,12 @@ def _render_map_route_card(
             .trip-route-stats span + span {{
                 margin-left: 6px;
             }}
+            .trip-route-place-names {{
+                font-size: 10pt;
+                color: {theme.secondary_color};
+                margin-top: 8px;
+                line-height: 1.4;
+            }}
             .trip-route-map-frame {{
                 margin-top: 14px;
                 border-radius: 8px;
@@ -864,6 +928,7 @@ def _render_map_route_card(
             <header class="trip-route-header">
                 <h1 class="trip-route-title">{title}</h1>
                 {f'<div class="trip-route-stats"><span>{stats_line}</span></div>' if stats_line else ''}
+                {f'<div class="trip-route-place-names">{place_names_line}</div>' if place_names_line else ''}
             </header>
             {figure_html}
         </section>
@@ -1292,6 +1357,11 @@ def _render_day_intro(
         stats_parts.append(f"{total_hours:.1f} h")
     stats_line = " • ".join([p for p in stats_parts if p])
 
+    # Build place names text for this day
+    place_names_line = ""
+    if day_idx is not None:
+        place_names_line = _build_day_place_names(day_idx, getattr(layout, "place_candidates", None) or [])
+
     segment_list_html = (
         f'<ul class="day-intro-segments">' + "".join(segment_items) + "</ul>"
         if segment_items
@@ -1341,6 +1411,12 @@ def _render_day_intro(
                 color: {theme.primary_color};
                 margin: 2px 0 10px 0;
             }}
+            .day-intro-place-names {{
+                font-size: 10pt;
+                color: {theme.secondary_color};
+                margin: 4px 0 10px 0;
+                line-height: 1.4;
+            }}
             .day-intro-map {{
                 margin: 10px 0 12px 0;
             }}
@@ -1377,6 +1453,7 @@ def _render_day_intro(
             </div>
             <div class="day-intro-body">
                 {f'<div class=\"day-intro-stats\">{stats_line}</div>' if stats_line else ''}
+                {f'<div class=\"day-intro-place-names\">{place_names_line}</div>' if place_names_line else ''}
                 {f'<div class=\"day-intro-map\"><img src=\"{mini_route_src}\" /></div>' if mini_route_src else ''}
                 {segment_list_html}
             </div>
