@@ -432,7 +432,7 @@ export default function BookDetailPage() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 max-w-lg">
+          <TabsList className="flex flex-wrap w-full gap-2">
             <TabsTrigger value="upload" className="gap-2">
               <Upload className="h-4 w-4" />
               Upload
@@ -451,7 +451,7 @@ export default function BookDetailPage() {
             </TabsTrigger>
             <TabsTrigger value="photos-quality" className="gap-2">
               <Image className="h-4 w-4" />
-              Photos (quality debug)
+              Quality (debug)
             </TabsTrigger>
           </TabsList>
 
@@ -1171,50 +1171,79 @@ function AssetThumb({ asset }: { asset: Asset }) {
 
 function PhotosQualityDebugPanel({ bookId }: { bookId: string }) {
   const { data, loading, error } = useBookPhotoQuality(bookId || undefined);
+  const [sortOrder, setSortOrder] = useState<'worst' | 'best'>('worst');
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading quality metrics…</div>;
   if (error) return <div className="text-sm text-destructive">Failed to load photo quality metrics.</div>;
-  if (!data || data.length === 0) return <div className="text-sm text-muted-foreground">No photos found for this book.</div>;
+  if (!data || data.length === 0) return <div className="text-sm text-muted-foreground">No quality metrics available.</div>;
 
-  const sorted = [...data].sort((a, b) => a.quality_score - b.quality_score);
+  const sorted = [...data].sort((a, b) => {
+    return sortOrder === 'worst' ? b.quality_score - a.quality_score : a.quality_score - b.quality_score;
+  });
+
+  const BAD_FLAGS = new Set(['very_dark', 'very_blurry', 'blurry', 'low_contrast', 'low_edge_density']);
 
   return (
-    <div className="space-y-2">
-      <div className="text-xs text-muted-foreground">
-        Debug-only view of per-photo quality metrics. Thresholds/flags are heuristic and not used for planning yet.
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-muted-foreground">Debug-only per-photo quality metrics. Heuristics only — not used for curation.</div>
+        <div className="flex items-center gap-2 text-xs">
+          <label className="text-muted-foreground">Sort by</label>
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value as 'worst' | 'best')}
+            className="h-8 rounded border border-input bg-background px-2 text-sm"
+          >
+            <option value="worst">Worst first</option>
+            <option value="best">Best first</option>
+          </select>
+        </div>
       </div>
+
       <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-        {sorted.map((m) => (
-          <div key={m.photo_id} className="flex gap-2 rounded border p-2 items-start">
-            <img
-              src={m.thumbnail_url ?? ''}
-              alt=""
-              className="h-16 w-16 flex-shrink-0 rounded object-cover bg-muted"
-            />
-            <div className="space-y-1 text-xs">
-              <div className="font-medium truncate">{m.file_path}</div>
-              <div className="flex flex-wrap gap-1">
-                <span>Q: {m.quality_score.toFixed(3)}</span>
-                <span>Blur: {m.blur_score.toFixed(2)}</span>
-                <span>Bright: {m.brightness.toFixed(2)}</span>
-                <span>Contr: {m.contrast.toFixed(2)}</span>
-                <span>Edges: {m.edge_density.toFixed(2)}</span>
-              </div>
-              {m.flags && m.flags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {m.flags.map((flag) => (
-                    <span
-                      key={flag}
-                      className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-900"
-                    >
-                      {flag}
-                    </span>
-                  ))}
+        {sorted.map((m) => {
+          const filename = (m.file_path || m.photo_id || '').split('/').pop() || m.photo_id;
+          return (
+            <div key={m.photo_id} className="flex items-start gap-3 rounded-md border bg-background p-2" style={{ minHeight: 64 }}>
+              <img src={m.thumbnail_url ?? ''} alt={filename} className="h-16 w-16 flex-shrink-0 rounded object-cover bg-muted" />
+              <div className="flex flex-1 flex-col text-xs overflow-hidden">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium truncate">{filename}</div>
+                  <div className="text-muted-foreground text-[11px]">Q: {m.quality_score.toFixed(3)}</div>
                 </div>
-              )}
+
+                <div className="text-[12px] text-muted-foreground mt-1 truncate">
+                  <span className="mr-2">Q: {m.quality_score.toFixed(3)}</span>
+                  <span className="mx-1">•</span>
+                  <span>Blur: {Number(m.blur_score).toFixed(0)}</span>
+                  <span className="mx-1">•</span>
+                  <span>Bright: {Number(m.brightness).toFixed(0)}</span>
+                  <span className="mx-1">•</span>
+                  <span>Contr: {Number(m.contrast).toFixed(1)}</span>
+                  <span className="mx-1">•</span>
+                  <span>Edges: {Number(m.edge_density).toFixed(3)}</span>
+                </div>
+
+                {m.flags && m.flags.length > 0 && (
+                  <div className="mt-auto flex flex-wrap gap-1">
+                    {m.flags.map((flag) => (
+                      <Badge
+                        key={flag}
+                        className={
+                          BAD_FLAGS.has(flag)
+                            ? 'bg-amber-100 text-amber-900 text-[11px] px-2 py-0.5'
+                            : 'bg-muted/30 text-muted-foreground text-[11px] px-2 py-0.5'
+                        }
+                      >
+                        {flag}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
