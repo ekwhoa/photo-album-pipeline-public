@@ -15,6 +15,7 @@ from services.book_planner import plan_book, get_book_segment_debug
 from services.timeline import TimelineService
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.places_enrichment import enrich_place_candidates_with_names
+from services.photo_quality import analyze_book_photos, PhotoQualityMetrics
 from services.curation import filter_approved
 from settings import settings
 
@@ -153,6 +154,19 @@ class PlaceCandidateSchema(BaseModel):
     stable_id: str
     override_name: Optional[str] = None
     hidden: bool = False
+
+
+class PhotoQualityMetricsSchema(BaseModel):
+    photo_id: str
+    thumbnail_url: Optional[str] = None
+    file_path: str
+    blur_score: float
+    brightness: float
+    contrast: float
+    edge_density: float
+    quality_score: float
+    face_count: Optional[int] = None
+    flags: List[str] = Field(default_factory=list)
 
 
 class PlaceOverrideUpdateSchema(BaseModel):
@@ -373,6 +387,49 @@ async def get_book_places_debug(book_id: str):
             )
             for c in candidates
         ]
+
+
+@router.get("/{book_id}/photo-quality-debug", response_model=List[PhotoQualityMetricsSchema])
+async def get_book_photo_quality(book_id: str):
+    """Debug endpoint: compute lightweight photo-quality metrics for a book's photos.
+
+    This is read-only and computed on-demand; results are not cached.
+    """
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        # Compute metrics (in-memory, per-request)
+        metrics = analyze_book_photos(book, storage)
+
+        # Build a lookup for assets to provide thumbnail/file_path info
+        assets = assets_repo.list_assets(session, book_id, status=None)
+        asset_lookup = {a.id: a for a in assets}
+
+        items: List[PhotoQualityMetricsSchema] = []
+        for m in metrics:
+            a = asset_lookup.get(m.photo_id)
+            file_path = a.file_path if a else ""
+            thumb_rel = a.thumbnail_path if a and a.thumbnail_path else (a.file_path if a else None)
+            thumb_url = f"/media/{thumb_rel}" if thumb_rel else None
+
+            items.append(
+                PhotoQualityMetricsSchema(
+                    photo_id=m.photo_id,
+                    thumbnail_url=thumb_url,
+                    file_path=file_path,
+                    blur_score=m.blur_score,
+                    brightness=m.brightness,
+                    contrast=m.contrast,
+                    edge_density=m.edge_density,
+                    quality_score=m.quality_score,
+                    face_count=m.face_count,
+                    flags=m.flags,
+                )
+            )
+
+        return items
 
 
 @router.post("/{book_id}/places/{stable_id}/override", response_model=PlaceCandidateSchema)

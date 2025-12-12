@@ -35,10 +35,12 @@ import {
   type PagePreview,
   type AutoHiddenDuplicateCluster,
   type BookSegmentDebugResponse,
+  type PhotoQualityMetrics,
 } from '@/lib/api';
 import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
 import { useBookPlacesDebug } from '@/hooks/useBookPlacesDebug';
+import { useBookPhotoQuality } from '@/hooks/useBookPhotoQuality';
 import { useBookItinerary } from '@/hooks/useBookItinerary';
 import { toast } from 'sonner';
 
@@ -430,7 +432,7 @@ export default function BookDetailPage() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 max-w-lg">
+          <TabsList className="grid w-full grid-cols-5 max-w-lg">
             <TabsTrigger value="upload" className="gap-2">
               <Upload className="h-4 w-4" />
               Upload
@@ -446,6 +448,10 @@ export default function BookDetailPage() {
             <TabsTrigger value="preview" className="gap-2">
               <Layout className="h-4 w-4" />
               Preview
+            </TabsTrigger>
+            <TabsTrigger value="photos-quality" className="gap-2">
+              <Image className="h-4 w-4" />
+              Photos (quality debug)
             </TabsTrigger>
           </TabsList>
 
@@ -1050,6 +1056,19 @@ export default function BookDetailPage() {
               </CardContent>
             </Card>
           </TabsContent>
+          <TabsContent value="photos-quality" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>Photos (quality debug)</CardTitle>
+                  <CardDescription>Per-photo heuristic quality metrics (debug-only).</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <PhotosQualityDebugPanel bookId={id ?? ''} />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* Page Detail Modal */}
           <PageDetailModal
@@ -1147,6 +1166,57 @@ function AssetThumb({ asset }: { asset: Asset }) {
       className="h-16 w-16 rounded-md object-cover border border-muted-foreground/20 bg-muted"
       loading="lazy"
     />
+  );
+}
+
+function PhotosQualityDebugPanel({ bookId }: { bookId: string }) {
+  const { data, loading, error } = useBookPhotoQuality(bookId || undefined);
+
+  if (loading) return <div className="text-sm text-muted-foreground">Loading quality metrics…</div>;
+  if (error) return <div className="text-sm text-destructive">Failed to load photo quality metrics.</div>;
+  if (!data || data.length === 0) return <div className="text-sm text-muted-foreground">No photos found for this book.</div>;
+
+  const sorted = [...data].sort((a, b) => a.quality_score - b.quality_score);
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-muted-foreground">
+        Debug-only view of per-photo quality metrics. Thresholds/flags are heuristic and not used for planning yet.
+      </div>
+      <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+        {sorted.map((m) => (
+          <div key={m.photo_id} className="flex gap-2 rounded border p-2 items-start">
+            <img
+              src={m.thumbnail_url ?? ''}
+              alt=""
+              className="h-16 w-16 flex-shrink-0 rounded object-cover bg-muted"
+            />
+            <div className="space-y-1 text-xs">
+              <div className="font-medium truncate">{m.file_path}</div>
+              <div className="flex flex-wrap gap-1">
+                <span>Q: {m.quality_score.toFixed(3)}</span>
+                <span>Blur: {m.blur_score.toFixed(2)}</span>
+                <span>Bright: {m.brightness.toFixed(2)}</span>
+                <span>Contr: {m.contrast.toFixed(2)}</span>
+                <span>Edges: {m.edge_density.toFixed(2)}</span>
+              </div>
+              {m.flags && m.flags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {m.flags.map((flag) => (
+                    <span
+                      key={flag}
+                      className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-900"
+                    >
+                      {flag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

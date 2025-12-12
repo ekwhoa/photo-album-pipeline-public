@@ -130,6 +130,19 @@ export interface PlaceCandidateDebug {
   hidden: boolean;
 }
 
+export interface PhotoQualityMetrics {
+  photo_id: string;
+  thumbnail_url?: string | null;
+  file_path: string;
+  blur_score: number;
+  brightness: number;
+  contrast: number;
+  edge_density: number;
+  quality_score: number;
+  face_count?: number | null;
+  flags: string[];
+}
+
 export interface UpdatePlaceOverridePayload {
   customName?: string | null;
   hidden?: boolean;
@@ -190,6 +203,21 @@ export const booksApi = {
         stableId: String((item as any).stable_id ?? ''),
         overrideName: (item as any).override_name,
         hidden: Boolean((item as any).hidden ?? false),
+      }))
+    ),
+  getBookPhotoQuality: (id: string): Promise<PhotoQualityMetrics[]> =>
+    apiRequest<any[]>(`/books/${id}/photo-quality-debug`).then((data) =>
+      (data || []).map((item) => ({
+        photo_id: String(item.photo_id ?? ''),
+        thumbnail_url: item.thumbnail_url ? (String(item.thumbnail_url).startsWith('http') ? String(item.thumbnail_url) : `${API_BASE_URL}${String(item.thumbnail_url)}`) : null,
+        file_path: String(item.file_path ?? ''),
+        blur_score: Number(item.blur_score ?? 0),
+        brightness: Number(item.brightness ?? 0),
+        contrast: Number(item.contrast ?? 0),
+        edge_density: Number(item.edge_density ?? 0),
+        quality_score: Number(item.quality_score ?? 0),
+        face_count: item.face_count ?? null,
+        flags: (item.flags as string[] | undefined) ?? [],
       }))
     ),
   
