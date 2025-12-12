@@ -1096,6 +1096,9 @@ def _render_trip_summary_card(
     itinerary_days = getattr(layout, "itinerary_days", None) or []
     place_candidates = getattr(layout, "place_candidates", None) or []
     notable_places = _build_notable_places(place_candidates)
+    # Build display labels for the notable places using the unified formatter
+    notable_place_labels = [_format_place_name_for_display(p) for p in notable_places]
+    logger.info("[TRIP_SUMMARY_PLACES] bullets=%s", notable_place_labels)
     trip_highlight_places = _choose_trip_highlight_places(place_candidates)
 
     def fmt_date(date_iso: str) -> str:
@@ -1294,7 +1297,7 @@ def _render_trip_summary_card(
             <div class="trip-notable-places">
                 <div class="trip-notable-places-title">Notable places</div>
                 <ul class="trip-notable-places-list">
-                    {''.join(f'<li>{_format_place_label(p)}</li>' for p in notable_places)}
+                    {''.join(f'<li>{label}</li>' for label in notable_place_labels)}
                 </ul>
             </div>
             ''' if notable_places else ''}

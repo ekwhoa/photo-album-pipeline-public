@@ -36,7 +36,9 @@ def enrich_place_candidates_with_names(
 
     client = get_default_places_client()
     for cand in result[:max_lookups]:
-        if getattr(cand, "best_place_name", None):
+        # If the candidate already has a best_place_name OR the user supplied an override,
+        # skip enrichment so we don't clobber a user-provided display name.
+        if getattr(cand, "best_place_name", None) or getattr(cand, "override_name", None):
             continue
         try:
             search = client.search_nearby(
