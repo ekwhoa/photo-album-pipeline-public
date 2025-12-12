@@ -12,3 +12,4 @@ class PlaceResult:
     types: List[str]
     confidence: float
     raw: Optional[dict] = None
+    display_name: Optional[str] = None  # cleaned, book-ready name (derived from raw Nominatim data)

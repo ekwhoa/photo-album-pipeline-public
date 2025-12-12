@@ -603,14 +603,10 @@ export default function BookDetailPage() {
                     {placesDebug.map((p, idx) => (
                       <li key={idx} className="flex flex-col rounded border bg-muted/40 px-2 py-1">
                         {(() => {
-                          const formatPlaceName = (raw?: string) => {
-                            if (!raw) return undefined;
-                            const first = raw.split(',')[0].trim();
-                            if (!first) return undefined;
-                            return first.length > 50 ? `${first.slice(0, 47).trimEnd()}…` : first;
-                          };
-                          const shortName = formatPlaceName(p.bestPlaceName);
-                          if (!shortName) return null;
+                          // Prefer displayName, then rawName, then bestPlaceName
+                          const placeName = p.displayName || p.rawName || p.bestPlaceName;
+                          if (!placeName) return null;
+                          const shortName = placeName.length > 50 ? `${placeName.slice(0, 47).trimEnd()}…` : placeName;
                           return <div className="text-sm font-semibold text-foreground">{shortName}</div>;
                         })()}
                         <div className="flex items-center justify-between text-xs text-muted-foreground">

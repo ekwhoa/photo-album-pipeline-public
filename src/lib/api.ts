@@ -123,6 +123,8 @@ export interface PlaceCandidateDebug {
   dayIndices: number[];
   thumbnails: { id: string; thumbUrl: string | null }[];
   bestPlaceName?: string;
+  rawName?: string;
+  displayName?: string;
 }
 
 export interface BookItineraryResponse extends BookItinerary {}

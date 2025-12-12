@@ -148,6 +148,8 @@ class PlaceCandidateSchema(BaseModel):
     day_indices: List[int]
     thumbnails: List[PlaceCandidateThumbnailSchema] = Field(default_factory=list)
     best_place_name: Optional[str] = None
+    raw_name: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -353,6 +355,8 @@ async def get_book_places_debug(book_id: str):
                     for thumb in (c.thumbnails or [])
                 ],
                 best_place_name=c.best_place_name,
+                raw_name=c.raw_name,
+                display_name=c.display_name,
             )
             for c in candidates
         ]

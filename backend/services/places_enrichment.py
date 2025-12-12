@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Sequence
 
-from services.places_client import get_default_places_client
+from services.places_client import get_default_places_client, format_place_display_name
 from services.places_types import PlaceResult
 from services.itinerary import PlaceCandidate
 from settings import settings
@@ -28,7 +28,7 @@ def enrich_place_candidates_with_names(
     max_lookups: int = 10,
 ) -> List[PlaceCandidate]:
     """
-    Populate best_place_name on candidates using PlacesClient when enabled.
+    Populate best_place_name, raw_name, and display_name on candidates using PlacesClient when enabled.
     """
     result = list(candidates)
     if not settings.PLACES_LOOKUP_ENABLED:
@@ -50,4 +50,11 @@ def enrich_place_candidates_with_names(
         best_name = _pick_best_place_name(search)
         if best_name:
             cand.best_place_name = best_name
+        
+        # Also populate raw_name and display_name from the best result
+        if search:
+            best_result = search[0]  # Already sorted by score
+            cand.raw_name = best_result.name or None
+            cand.display_name = best_result.display_name or format_place_display_name(best_result)
+    
     return result

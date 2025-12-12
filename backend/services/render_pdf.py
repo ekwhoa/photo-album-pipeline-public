@@ -216,11 +216,19 @@ def _build_day_place_markers(day_index: int, place_candidates: Iterable[PlaceCan
 def _format_place_name_for_display(candidate: PlaceCandidate) -> str:
     """
     Format a single PlaceCandidate for display text.
-    Uses best_place_name if available, otherwise falls back to coordinates.
+    Prefers display_name (clean, book-ready), then falls back to raw_name,
+    then best_place_name, and finally coordinates.
     """
+    # Try display_name first (clean, book-ready version)
+    if candidate.display_name and candidate.display_name.strip():
+        return candidate.display_name.strip()
+    # Fall back to raw_name
+    if candidate.raw_name and candidate.raw_name.strip():
+        return candidate.raw_name.strip()
+    # Fall back to best_place_name for backwards compatibility
     if candidate.best_place_name and candidate.best_place_name.strip():
         return candidate.best_place_name.strip()
-    # Fallback to coordinates
+    # Last resort: coordinates
     return f"({candidate.center_lat:.4f}, {candidate.center_lon:.4f})"
 
 

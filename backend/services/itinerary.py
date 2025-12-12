@@ -302,6 +302,8 @@ class PlaceCandidate:
     day_indices: List[int]
     score: float = 0.0
     best_place_name: Optional[str] = None
+    raw_name: Optional[str] = None  # short name from Nominatim (e.g. 'Alinea')
+    display_name: Optional[str] = None  # cleaned, book-ready name for UI/PDF
     thumbnails: List["PlaceCandidateThumbnail"] = field(default_factory=list)
 
 
