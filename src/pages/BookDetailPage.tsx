@@ -21,6 +21,8 @@ import {
   X,
   Image,
   CheckCheck,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   booksApi,
@@ -64,6 +66,9 @@ export default function BookDetailPage() {
     loading: placesLoading,
     error: placesError,
   } = useBookPlacesDebug(id);
+  const [placesLocal, setPlacesLocal] = useState<typeof placesDebug | null>(null);
+  const [editingStableId, setEditingStableId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState<string>('');
   const itinerary = useBookItinerary(id);
   const [expandedSegmentDays, setExpandedSegmentDays] = useState<Set<number>>(new Set());
 
@@ -187,6 +192,44 @@ export default function BookDetailPage() {
   useEffect(() => {
     loadBook();
   }, [id]);
+
+  useEffect(() => {
+    // Keep a local mutable copy so we can refresh after edits without changing the hook
+    setPlacesLocal(placesDebug);
+  }, [placesDebug]);
+
+  const refreshPlaces = async () => {
+    if (!id) return;
+    try {
+      const fresh = await booksApi.getPlacesDebug(id);
+      setPlacesLocal(fresh);
+    } catch (err) {
+      console.error('Failed to refresh places', err);
+      toast.error('Failed to refresh places');
+    }
+  };
+
+  const handleSaveOverride = async (stableId: string, customName: string | null, hidden?: boolean) => {
+    if (!id) return;
+    try {
+      const updated = await booksApi.updatePlaceOverride(id, stableId, { customName, hidden });
+      // Optimistically update local places list if present
+      setPlacesLocal((prev) => {
+        if (!prev) return prev;
+        return prev.map((p) => (p.stableId === updated.stableId ? updated : p));
+      });
+      toast.success('Place override saved');
+      setEditingStableId(null);
+    } catch (err) {
+      console.error('Failed to save override', err);
+      toast.error('Failed to save place override');
+    }
+  };
+
+  const handleToggleHidden = async (stableId: string, currentlyHidden: boolean) => {
+    // When toggling hidden, don't send a customName (undefined) so we don't accidentally clear it
+    await handleSaveOverride(stableId, undefined as unknown as string | null, !currentlyHidden);
+  };
 
   useEffect(() => {
     setPreviewHtml(null);
@@ -598,44 +641,108 @@ export default function BookDetailPage() {
                 {!placesLoading && !placesError && placesDebug && placesDebug.length === 0 && (
                   <p className="text-sm text-muted-foreground">No place candidates.</p>
                 )}
-                {!placesLoading && !placesError && placesDebug && placesDebug.length > 0 && (
-                  <ul className="text-sm text-foreground space-y-1">
-                    {placesDebug.map((p, idx) => (
-                      <li key={idx} className="flex flex-col rounded border bg-muted/40 px-2 py-1">
-                        {(() => {
-                          // Prefer displayName, then rawName, then bestPlaceName
-                          const placeName = p.displayName || p.rawName || p.bestPlaceName;
-                          if (!placeName) return null;
-                          const shortName = placeName.length > 50 ? `${placeName.slice(0, 47).trimEnd()}…` : placeName;
-                          return <div className="text-sm font-semibold text-foreground">{shortName}</div>;
-                        })()}
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span className="font-mono text-foreground">{idx + 1}.</span>
-                          <span>
-                            {p.visitCount} visits • {p.totalPhotos} photos • {p.totalDurationHours.toFixed(1)} h •{' '}
-                            {p.totalDistanceKm.toFixed(1)} km
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          days [{p.dayIndices.join(', ')}] • ({p.centerLat.toFixed(4)}, {p.centerLon.toFixed(4)})
-                        </div>
-                        {p.thumbnails && p.thumbnails.length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {p.thumbnails.map((t) =>
-                              t.thumbUrl ? (
-                                <img
-                                  key={t.id}
-                                  src={t.thumbUrl}
-                                  alt=""
-                                  className="h-12 w-12 object-cover rounded-sm border"
-                                />
-                              ) : null
-                            )}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                {!placesLoading && !placesError && (placesLocal ?? placesDebug) && (placesLocal ?? placesDebug)!.length > 0 && (
+                  (() => {
+                    const places = (placesLocal ?? placesDebug) || [];
+                    return (
+                      <ul className="text-sm text-foreground space-y-1">
+                        {places.map((p, idx) => {
+                          const key = p.stableId || String(idx);
+                          const placeName = p.overrideName ?? p.displayName ?? p.rawName ?? p.bestPlaceName;
+                          const shortName = placeName && placeName.length > 50 ? `${placeName.slice(0, 47).trimEnd()}…` : placeName;
+                          const isEditing = editingStableId === p.stableId;
+                          return (
+                            <li key={key} className="flex flex-col rounded border bg-muted/40 px-2 py-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-foreground">{idx + 1}.</span>
+                                  {isEditing ? (
+                                    <input
+                                      value={editingText}
+                                      onChange={(e) => setEditingText(e.target.value)}
+                                      className="text-sm font-semibold text-foreground bg-background border rounded px-2 py-1"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          handleSaveOverride(p.stableId, editingText || null);
+                                        } else if (e.key === 'Escape') {
+                                          setEditingStableId(null);
+                                        }
+                                      }}
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingStableId(p.stableId);
+                                        setEditingText(p.overrideName ?? p.displayName ?? p.rawName ?? '');
+                                      }}
+                                      className="text-sm font-semibold text-foreground text-left"
+                                    >
+                                      {shortName}
+                                    </button>
+                                  )}
+                                  {p.overrideName ? (
+                                    <Badge variant="secondary">Edited</Badge>
+                                  ) : null}
+                                  {p.hidden ? (
+                                    <span className="text-xs text-muted-foreground ml-2">(hidden)</span>
+                                  ) : null}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {isEditing ? (
+                                    <>
+                                      <Button size="xs" onClick={() => handleSaveOverride(p.stableId, editingText || null)}>
+                                        Save
+                                      </Button>
+                                      <Button size="xs" variant="ghost" onClick={() => setEditingStableId(null)}>
+                                        Cancel
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        title={p.hidden ? 'Unhide place' : 'Hide place'}
+                                        onClick={() => handleToggleHidden(p.stableId, p.hidden)}
+                                        className="p-1 rounded hover:bg-muted/60"
+                                      >
+                                        {p.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
+                                <span>
+                                  {p.visitCount} visits • {p.totalPhotos} photos • {p.totalDurationHours.toFixed(1)} h • {' '}
+                                  {p.totalDistanceKm.toFixed(1)} km
+                                </span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                days [{p.dayIndices.join(', ')}] • ({p.centerLat.toFixed(4)}, {p.centerLon.toFixed(4)})
+                              </div>
+                              {p.thumbnails && p.thumbnails.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {p.thumbnails.map((t) =>
+                                    t.thumbUrl ? (
+                                      <img
+                                        key={t.id}
+                                        src={t.thumbUrl}
+                                        alt=""
+                                        className="h-12 w-12 object-cover rounded-sm border"
+                                      />
+                                    ) : null
+                                  )}
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    );
+                  })()
                 )}
               </CardContent>
             </Card>

@@ -23,6 +23,11 @@ MAX_PHOTO_DISTANCE_KM = 0.25
 MAX_THUMBS_PER_PLACE = 6
 
 
+def _make_place_stable_id(lat: float, lon: float) -> str:
+    """Generate a stable, deterministic ID for a place based on coordinates."""
+    return f"{lat:.5f},{lon:.5f}"
+
+
 def _classify_stop_kind(distance_km: float, duration_hours: float) -> str:
     """
     Classify a stop as 'travel' or 'local' using simple heuristics.
@@ -267,6 +272,7 @@ def build_place_candidates(
             day_indices=sorted(c["day_indices"]),
             score=0.0,
             best_place_name=None,
+            stable_id=_make_place_stable_id(c["center_lat"], c["center_lon"]),
             thumbnails=[
                 PlaceCandidateThumbnail(
                     id=pid,
@@ -291,6 +297,40 @@ def build_place_candidates(
     return candidates
 
 
+def merge_place_candidate_overrides(
+    candidates: List[PlaceCandidate],
+    book_id: str,
+) -> List[PlaceCandidate]:
+    """
+    Merge user overrides into place candidates.
+
+    Loads overrides from PlaceOverridesStore and applies custom_name and hidden flags
+    to matching candidates.
+
+    Args:
+        candidates: List of place candidates to augment.
+        book_id: The book ID (used to look up overrides).
+
+    Returns:
+        The same list with override fields populated.
+    """
+    from services.place_overrides import PlaceOverridesStore
+
+    store = PlaceOverridesStore()
+    overrides = store.get_overrides_for_book(book_id)
+
+    for candidate in candidates:
+        if candidate.stable_id in overrides:
+            override = overrides[candidate.stable_id]
+            if override.custom_name is not None:
+                candidate.override_name = override.custom_name
+                # Also update display_name so all downstream code sees the override
+                candidate.display_name = override.custom_name
+            candidate.hidden = override.hidden
+
+    return candidates
+
+
 @dataclass
 class PlaceCandidate:
     center_lat: float
@@ -304,6 +344,9 @@ class PlaceCandidate:
     best_place_name: Optional[str] = None
     raw_name: Optional[str] = None  # short name from Nominatim (e.g. 'Alinea')
     display_name: Optional[str] = None  # cleaned, book-ready name for UI/PDF
+    stable_id: str = ""  # deterministic key for overrides; set by caller
+    override_name: Optional[str] = None  # user override; takes priority over display names
+    hidden: bool = False  # user-hidden place (still in debug, filtered from PDF/markers)
     thumbnails: List["PlaceCandidateThumbnail"] = field(default_factory=list)
 
 

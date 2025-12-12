@@ -150,6 +150,14 @@ class PlaceCandidateSchema(BaseModel):
     best_place_name: Optional[str] = None
     raw_name: Optional[str] = None
     display_name: Optional[str] = None
+    stable_id: str
+    override_name: Optional[str] = None
+    hidden: bool = False
+
+
+class PlaceOverrideUpdateSchema(BaseModel):
+    custom_name: Optional[str] = None
+    hidden: Optional[bool] = None
 
 
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
@@ -333,6 +341,8 @@ async def get_book_places_debug(book_id: str):
 
         itinerary_days = build_book_itinerary(book, days, approved_assets)
         candidates = build_place_candidates(itinerary_days, approved_assets)
+        from services.itinerary import merge_place_candidate_overrides
+        candidates = merge_place_candidate_overrides(candidates, book.id)
         if settings.PLACES_LOOKUP_ENABLED and candidates:
             MAX_LOOKUPS = 10
             logger.debug("places-debug: enriching top %d places with Nominatim", min(len(candidates), MAX_LOOKUPS))
@@ -357,9 +367,84 @@ async def get_book_places_debug(book_id: str):
                 best_place_name=c.best_place_name,
                 raw_name=c.raw_name,
                 display_name=c.display_name,
+                stable_id=c.stable_id,
+                override_name=c.override_name,
+                hidden=c.hidden,
             )
             for c in candidates
         ]
+
+
+@router.post("/{book_id}/places/{stable_id}/override", response_model=PlaceCandidateSchema)
+async def update_place_override(
+    book_id: str,
+    stable_id: str,
+    payload: PlaceOverrideUpdateSchema,
+):
+    """Update override (custom_name or hidden flag) for a place."""
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        # Upsert the override in the store
+        from services.place_overrides import PlaceOverridesStore
+        store = PlaceOverridesStore()
+        # Only pass the fields that are actually provided in the payload
+        override_kwargs = {}
+        if payload.custom_name is not None:
+            override_kwargs['custom_name'] = payload.custom_name
+        if payload.hidden is not None:
+            override_kwargs['hidden'] = payload.hidden
+        
+        store.upsert_override(
+            book_id=book_id,
+            stable_id=stable_id,
+            **override_kwargs,
+        )
+
+        # Rebuild candidates and return the updated one
+        approved_assets = assets_repo.list_assets(session, book_id, status=None)
+        approved_assets = filter_approved(approved_assets)
+        timeline_service = TimelineService()
+        days = timeline_service.organize_assets_by_day(approved_assets)
+
+        itinerary_days = build_book_itinerary(book, days, approved_assets)
+        candidates = build_place_candidates(itinerary_days, approved_assets)
+        from services.itinerary import merge_place_candidate_overrides
+        candidates = merge_place_candidate_overrides(candidates, book.id)
+        if settings.PLACES_LOOKUP_ENABLED and candidates:
+            MAX_LOOKUPS = 10
+            candidates = enrich_place_candidates_with_names(candidates, max_lookups=MAX_LOOKUPS)
+
+        # Find the candidate matching stable_id
+        for c in candidates:
+            if c.stable_id == stable_id:
+                return PlaceCandidateSchema(
+                    center_lat=c.center_lat,
+                    center_lon=c.center_lon,
+                    total_duration_hours=c.total_duration_hours,
+                    total_photos=c.total_photos,
+                    total_distance_km=c.total_distance_km,
+                    visit_count=c.visit_count,
+                    day_indices=c.day_indices,
+                    thumbnails=[
+                        PlaceCandidateThumbnailSchema(
+                            id=thumb.id,
+                            thumbnail_path=thumb.thumbnail_path,
+                            file_path=thumb.file_path,
+                        )
+                        for thumb in (c.thumbnails or [])
+                    ],
+                    best_place_name=c.best_place_name,
+                    raw_name=c.raw_name,
+                    display_name=c.display_name,
+                    stable_id=c.stable_id,
+                    override_name=c.override_name,
+                    hidden=c.hidden,
+                )
+
+        raise HTTPException(status_code=404, detail="Place not found")
 
 
 @router.get("", response_model=List[BookResponse])

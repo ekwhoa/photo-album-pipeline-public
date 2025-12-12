@@ -125,6 +125,14 @@ export interface PlaceCandidateDebug {
   bestPlaceName?: string;
   rawName?: string;
   displayName?: string;
+  stableId: string;
+  overrideName?: string | null;
+  hidden: boolean;
+}
+
+export interface UpdatePlaceOverridePayload {
+  customName?: string | null;
+  hidden?: boolean;
 }
 
 export interface BookItineraryResponse extends BookItinerary {}
@@ -177,6 +185,11 @@ export const booksApi = {
           };
         }) ?? [],
         bestPlaceName: (item as any).best_place_name,
+        rawName: (item as any).raw_name,
+        displayName: (item as any).display_name,
+        stableId: String((item as any).stable_id ?? ''),
+        overrideName: (item as any).override_name,
+        hidden: Boolean((item as any).hidden ?? false),
       }))
     ),
   
@@ -188,6 +201,45 @@ export const booksApi = {
   
   delete: (id: string) =>
     apiRequest<void>(`/books/${id}`, { method: 'DELETE' }),
+
+  updatePlaceOverride: (bookId: string, stableId: string, payload: UpdatePlaceOverridePayload) =>
+    // Convert camelCase payload keys to snake_case expected by the backend
+    (async () => {
+      const bodyPayload: any = {};
+      if ((payload as any).customName !== undefined) bodyPayload.custom_name = (payload as any).customName;
+      if ((payload as any).custom_name !== undefined) bodyPayload.custom_name = (payload as any).custom_name;
+      if ((payload as any).hidden !== undefined) bodyPayload.hidden = (payload as any).hidden;
+
+      const raw = await apiRequest<any>(
+        `/books/${bookId}/places/${encodeURIComponent(stableId)}/override`,
+        {
+          method: 'POST',
+          body: JSON.stringify(bodyPayload),
+        }
+      );
+
+      // Map snake_case response to camelCase PlaceCandidateDebug
+      const mapped: PlaceCandidateDebug = {
+        centerLat: Number(raw.center_lat ?? 0),
+        centerLon: Number(raw.center_lon ?? 0),
+        totalDurationHours: Number(raw.total_duration_hours ?? 0),
+        totalPhotos: Number(raw.total_photos ?? 0),
+        totalDistanceKm: Number(raw.total_distance_km ?? 0),
+        visitCount: Number(raw.visit_count ?? 0),
+        dayIndices: (raw.day_indices as number[] | undefined) ?? [],
+        thumbnails: ((raw.thumbnails as any[] | undefined) ?? []).map((t) => {
+          const path = t.thumbnail_path ?? t.file_path ?? null;
+          return { id: String(t.id ?? ''), thumbUrl: path ? `${API_BASE_URL}/media/${path}` : null };
+        }),
+        bestPlaceName: raw.best_place_name,
+        rawName: raw.raw_name,
+        displayName: raw.display_name,
+        stableId: String(raw.stable_id ?? ''),
+        overrideName: raw.override_name ?? null,
+        hidden: Boolean(raw.hidden ?? false),
+      };
+      return mapped;
+    })(),
 };
 
 // Assets API

@@ -110,7 +110,7 @@ def _format_place_label(place: PlaceCandidate) -> str:
 
 
 def _build_notable_places(place_candidates: List[PlaceCandidate]) -> List[PlaceCandidate]:
-    candidates = place_candidates or []
+    candidates = [p for p in (place_candidates or []) if not p.hidden]
     if len(candidates) > MAX_NOTABLE_PLACES:
         candidates = candidates[:MAX_NOTABLE_PLACES]
     candidates = enrich_place_candidates_with_names(candidates, max_lookups=len(candidates))
@@ -172,15 +172,15 @@ def _build_trip_place_markers(place_candidates: Iterable[PlaceCandidate]) -> Lis
     Return up to MAX_TRIP_PLACE_MARKERS RouteMarker objects for the trip route map.
     Uses the same scoring/ordering as the places debug UI:
     - Prefer candidates with higher score (more photos and duration).
-    - Only include candidates that have at least 1 photo.
+    - Only include candidates that have at least 1 photo and are not hidden.
     """
     markers: List[RouteMarker] = []
     candidates = list(place_candidates or [])
     print(f"[PLACE_MARKERS] _build_trip_place_markers: {len(candidates)} candidates received")
     # Candidates are already sorted by score descending from build_place_candidates
     for c in candidates:
-        if c.total_photos < 1:
-            print(f"[PLACE_MARKERS]   skipping candidate at ({c.center_lat:.4f}, {c.center_lon:.4f}) with {c.total_photos} photos")
+        if c.total_photos < 1 or c.hidden:
+            print(f"[PLACE_MARKERS]   skipping candidate at ({c.center_lat:.4f}, {c.center_lon:.4f}) - photos={c.total_photos}, hidden={c.hidden}")
             continue
         markers.append(RouteMarker(lat=c.center_lat, lon=c.center_lon, kind="place"))
         print(f"[PLACE_MARKERS]   added marker at ({c.center_lat:.4f}, {c.center_lon:.4f}) photos={c.total_photos}")
@@ -193,14 +193,14 @@ def _build_trip_place_markers(place_candidates: Iterable[PlaceCandidate]) -> Lis
 def _build_day_place_markers(day_index: int, place_candidates: Iterable[PlaceCandidate]) -> List[RouteMarker]:
     """
     Return up to MAX_DAY_PLACE_MARKERS RouteMarker objects for this specific day.
-    Only include candidates whose day_indices include this day_index.
+    Only include candidates whose day_indices include this day_index and are not hidden.
     """
     markers: List[RouteMarker] = []
     candidates = list(place_candidates or [])
     print(f"[PLACE_MARKERS] _build_day_place_markers: day_index={day_index}, {len(candidates)} candidates received")
     for c in candidates:
-        if c.total_photos < 1:
-            print(f"[PLACE_MARKERS]   day {day_index}: skipping ({c.center_lat:.4f}, {c.center_lon:.4f}) - no photos")
+        if c.total_photos < 1 or c.hidden:
+            print(f"[PLACE_MARKERS]   day {day_index}: skipping ({c.center_lat:.4f}, {c.center_lon:.4f}) - photos={c.total_photos}, hidden={c.hidden}")
             continue
         if day_index not in (c.day_indices or []):
             print(f"[PLACE_MARKERS]   day {day_index}: skipping ({c.center_lat:.4f}, {c.center_lon:.4f}) - not in day_indices {c.day_indices}")
@@ -216,10 +216,13 @@ def _build_day_place_markers(day_index: int, place_candidates: Iterable[PlaceCan
 def _format_place_name_for_display(candidate: PlaceCandidate) -> str:
     """
     Format a single PlaceCandidate for display text.
-    Prefers display_name (clean, book-ready), then falls back to raw_name,
+    Prefers override_name, then display_name, then raw_name,
     then best_place_name, and finally coordinates.
     """
-    # Try display_name first (clean, book-ready version)
+    # Try override_name first (user custom name takes highest priority)
+    if candidate.override_name and candidate.override_name.strip():
+        return candidate.override_name.strip()
+    # Try display_name (clean, book-ready version)
     if candidate.display_name and candidate.display_name.strip():
         return candidate.display_name.strip()
     # Fall back to raw_name
@@ -237,13 +240,14 @@ def _build_trip_place_names(place_candidates: Iterable[PlaceCandidate], max_coun
     Return a formatted string of place names for the trip route page.
     E.g., "Highlighted places: Chicago, Millennium Park, Museum Campus"
     
-    Only includes candidates with at least 1 photo, respecting the same limits as place markers.
+    Only includes candidates with at least 1 photo and not hidden.
+    Respects the same limits as place markers.
     Returns an empty string if no candidates qualify.
     """
     candidates = list(place_candidates or [])
     names: List[str] = []
     for c in candidates:
-        if c.total_photos < 1:
+        if c.total_photos < 1 or c.hidden:
             continue
         names.append(_format_place_name_for_display(c))
         if len(names) >= max_count:
@@ -258,13 +262,13 @@ def _build_day_place_names(day_index: int, place_candidates: Iterable[PlaceCandi
     Return a formatted string of place names for a specific day intro page.
     E.g., "Places today: The Bean, Chicago Riverwalk"
     
-    Only includes candidates for that day with at least 1 photo.
+    Only includes candidates for that day with at least 1 photo and not hidden.
     Returns an empty string if no candidates qualify.
     """
     candidates = list(place_candidates or [])
     names: List[str] = []
     for c in candidates:
-        if c.total_photos < 1:
+        if c.total_photos < 1 or c.hidden:
             continue
         if day_index not in (c.day_indices or []):
             continue
@@ -575,6 +579,8 @@ def _generate_book_html(
         days = build_days_and_events(manifest)
         itinerary_days = build_book_itinerary(book, days, asset_list)
         place_candidates = build_place_candidates(itinerary_days, asset_list)
+        from services.itinerary import merge_place_candidate_overrides
+        place_candidates = merge_place_candidate_overrides(place_candidates, book.id)
     except Exception:
         itinerary_days = []
         place_candidates = []
