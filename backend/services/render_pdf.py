@@ -301,6 +301,59 @@ def _choose_trip_highlight_places(
     return candidates[:MAX_TRIP_HIGHLIGHT_PLACES]
 
 
+def _render_place_highlight_cards(
+    place_candidates: Iterable[PlaceCandidate],
+    *,
+    day_index: Optional[int] = None,
+    mode: str = "web",
+    media_root: str = "",
+    media_base_url: str | None = None,
+) -> str:
+    """
+    Render a block of place highlight cards.
+
+    - If `day_index` is provided, only include candidates for that day.
+    - Respects `MAX_TRIP_HIGHLIGHT_PLACES` and `MAX_THUMBNAILS_PER_PLACE`.
+    - Works for both `web` and `pdf` modes (resolves thumbnail URLs accordingly).
+    """
+    candidates = list(place_candidates or [])
+    if day_index is not None:
+        candidates = [p for p in candidates if day_index in (p.day_indices or [])]
+    if not candidates:
+        return ""
+
+    # Choose top N places using the same selection logic as trip highlights
+    chosen = _choose_trip_highlight_places(candidates)
+    if not chosen:
+        return ""
+
+    cards_html_parts: List[str] = []
+    for p in chosen:
+        name = p.display_name or p.raw_name or p.best_place_name or f"({p.center_lat:.4f}, {p.center_lon:.4f})"
+
+        thumbs_parts: List[str] = []
+        for t in (p.thumbnails or [])[:MAX_THUMBNAILS_PER_PLACE]:
+            if not getattr(t, "thumbnail_path", None):
+                continue
+            if mode == "pdf":
+                candidate = Path(t.thumbnail_path)
+                if not candidate.is_absolute():
+                    candidate = Path(media_root) / candidate
+                img_src = candidate.resolve().as_uri()
+            else:
+                img_src = _resolve_web_image_url(t.thumbnail_path, media_base_url)
+            thumbs_parts.append(f'<img src="{img_src}" class="trip-place-highlight-thumb" />')
+
+        cards_html_parts.append(
+            f'''<div class="trip-place-highlight-card">
+                        <div class="trip-place-highlight-name">{name}</div>
+                        <div class="trip-place-highlight-thumbs">{''.join(thumbs_parts)}</div>
+                    </div>'''
+        )
+
+    return f"<div class=\"trip-place-highlights\">{''.join(cards_html_parts)}</div>"
+
+
 def render_book_to_pdf(
     book: Book,
     layouts: List[PageLayout],
@@ -1239,23 +1292,7 @@ def _render_trip_summary_card(
                 </ul>
             </div>
             ''' if notable_places else ''}
-            {f'''
-            <div class="trip-place-highlights">
-                {''.join(
-                    f'''<div class="trip-place-highlight-card">
-                        <div class="trip-place-highlight-name">{p.display_name or p.raw_name or p.best_place_name or f"({p.center_lat:.4f}, {p.center_lon:.4f})"}</div>
-                        <div class="trip-place-highlight-thumbs">
-                            {''.join(
-                                f'<img src="{_resolve_web_image_url(t.thumbnail_path, media_base_url)}" class="trip-place-highlight-thumb" />'
-                                for t in (p.thumbnails or [])[:MAX_THUMBNAILS_PER_PLACE]
-                                if t.thumbnail_path
-                            )}
-                        </div>
-                    </div>'''
-                    for p in trip_highlight_places
-                )}
-            </div>
-            ''' if trip_highlight_places else ''}
+            {(_render_place_highlight_cards(place_candidates, mode=mode, media_root=media_root, media_base_url=media_base_url) if place_candidates else '')}
             {day_rows}
         </section>
     </div>
@@ -1452,6 +1489,22 @@ def _render_day_intro(
     if day_idx is not None:
         place_names_line = _build_day_place_names(day_idx, getattr(layout, "place_candidates", None) or [])
 
+    # Build place cards HTML for this day (if any) and append to the names block
+    place_cards_html = ""
+    if day_idx is not None:
+        place_cards_html = _render_place_highlight_cards(
+            getattr(layout, "place_candidates", None) or [],
+            day_index=day_idx,
+            mode=mode,
+            media_root=media_root,
+            media_base_url=media_base_url,
+        )
+    if place_cards_html:
+        if place_names_line:
+            place_names_line = f"{place_names_line} {place_cards_html}"
+        else:
+            place_names_line = place_cards_html
+
     segment_list_html = (
         f'<ul class="day-intro-segments">' + "".join(segment_items) + "</ul>"
         if segment_items
@@ -1533,6 +1586,43 @@ def _render_day_intro(
             .day-intro-segment-meta {{
                 margin-left: 4px;
             }}
+                    /* Reuse trip-place card styles so day-intro can render the same cards */
+                    .trip-place-highlights {{
+                        margin-top: 14px;
+                        display: flex;
+                        gap: 8px;
+                        flex-wrap: wrap;
+                    }}
+                    .trip-place-highlight-card {{
+                        flex: 0 1 calc(33.333% - 6px);
+                        min-width: 40mm;
+                        border: 1px solid #d1d5db;
+                        border-radius: 4px;
+                        padding: 6px;
+                        background: #fafafa;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                    }}
+                    .trip-place-highlight-name {{
+                        font-size: 9pt;
+                        font-weight: 600;
+                        color: #111827;
+                        line-height: 1.3;
+                        word-break: break-word;
+                    }}
+                    .trip-place-highlight-thumbs {{
+                        display: flex;
+                        gap: 3px;
+                        flex-wrap: wrap;
+                    }}
+                    .trip-place-highlight-thumb {{
+                        height: 40px;
+                        width: 40px;
+                        object-fit: cover;
+                        border-radius: 2px;
+                        border: 1px solid #e5e7eb;
+                    }}
         </style>
         <div class="day-intro">
             <div class="day-intro-header">
@@ -1815,19 +1905,25 @@ def _resolve_web_image_url(raw_path: str, media_base_url: str | None) -> str:
     if raw_path.startswith(("http://", "https://", "data:")):
         return raw_path
 
-    # Normalize the incoming media_base_url into a base that always points to /media
+    # Determine the origin (e.g., http://localhost:8000) from media_base_url when available
+    origin = ""
     if media_base_url:
-        base = media_base_url.rstrip("/")
-        if not base.endswith("/media"):
-            base = f"{base}/media"
-    else:
-        base = "/media"
+        if "/media" in media_base_url:
+            origin = media_base_url.split("/media")[0].rstrip("/")
+        else:
+            origin = media_base_url.rstrip("/")
 
-    # Normalize raw_path to avoid duplicated "media/" segments
+    # If the raw path refers to a static asset (served from /static), preserve the /static path
     rp = raw_path.lstrip("/")
+    if rp.startswith("static/"):
+        return f"{origin}/{rp}" if origin else f"/{rp}"
+
+    # If the raw path already contains a leading media/ segment, trim it and construct a /media URL
     if rp.startswith("media/"):
         rp = rp[len("media/"):]
 
+    # Default: return URL under /media
+    base = f"{origin}/media" if origin else "/media"
     return f"{base}/{rp}"
 
 
