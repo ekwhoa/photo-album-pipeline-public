@@ -276,6 +276,31 @@ def _build_day_place_names(day_index: int, place_candidates: Iterable[PlaceCandi
     return "Places today: " + ", ".join(names)
 
 
+MAX_TRIP_HIGHLIGHT_PLACES = 3
+MAX_THUMBNAILS_PER_PLACE = 3
+
+
+def _choose_trip_highlight_places(
+    place_candidates: Iterable[PlaceCandidate],
+) -> List[PlaceCandidate]:
+    """
+    Pick up to 3 best places for the Trip Summary highlights strip.
+    Filters to candidates with at least 1 photo, then sorts by:
+    1. total_photos (descending)
+    2. total_duration_hours (descending)
+    3. visit_count (descending)
+    """
+    candidates = [p for p in (place_candidates or []) if p.total_photos > 0]
+    candidates.sort(
+        key=lambda p: (
+            -(p.total_photos or 0),
+            -(p.total_duration_hours or 0.0),
+            -(p.visit_count or 0),
+        )
+    )
+    return candidates[:MAX_TRIP_HIGHLIGHT_PLACES]
+
+
 def render_book_to_pdf(
     book: Book,
     layouts: List[PageLayout],
@@ -949,6 +974,9 @@ def _render_trip_summary_card(
     theme: Theme,
     width_mm: float,
     height_mm: float,
+    media_root: str = "",
+    mode: str = "web",
+    media_base_url: str | None = None,
 ) -> str:
     """Render a clean trip summary page with header + stats."""
     bg_color = layout.background_color or theme.background_color
@@ -1009,6 +1037,7 @@ def _render_trip_summary_card(
     itinerary_days = getattr(layout, "itinerary_days", None) or []
     place_candidates = getattr(layout, "place_candidates", None) or []
     notable_places = _build_notable_places(place_candidates)
+    trip_highlight_places = _choose_trip_highlight_places(place_candidates)
 
     def fmt_date(date_iso: str) -> str:
         try:
@@ -1137,6 +1166,42 @@ def _render_trip_summary_card(
             .trip-notable-places-list li + li {{
                 margin-top: 2px;
             }}
+            .trip-place-highlights {{
+                margin-top: 14px;
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+            }}
+            .trip-place-highlight-card {{
+                flex: 0 1 calc(33.333% - 6px);
+                min-width: 40mm;
+                border: 1px solid #d1d5db;
+                border-radius: 4px;
+                padding: 6px;
+                background: #fafafa;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }}
+            .trip-place-highlight-name {{
+                font-size: 9pt;
+                font-weight: 600;
+                color: #111827;
+                line-height: 1.3;
+                word-break: break-word;
+            }}
+            .trip-place-highlight-thumbs {{
+                display: flex;
+                gap: 3px;
+                flex-wrap: wrap;
+            }}
+            .trip-place-highlight-thumb {{
+                height: 40px;
+                width: 40px;
+                object-fit: cover;
+                border-radius: 2px;
+                border: 1px solid #e5e7eb;
+            }}
             .trip-summary-days {{
                 margin-top: 12px;
             }}
@@ -1174,6 +1239,23 @@ def _render_trip_summary_card(
                 </ul>
             </div>
             ''' if notable_places else ''}
+            {f'''
+            <div class="trip-place-highlights">
+                {''.join(
+                    f'''<div class="trip-place-highlight-card">
+                        <div class="trip-place-highlight-name">{p.display_name or p.raw_name or p.best_place_name or f"({p.center_lat:.4f}, {p.center_lon:.4f})"}</div>
+                        <div class="trip-place-highlight-thumbs">
+                            {''.join(
+                                f'<img src="{_resolve_web_image_url(t.thumbnail_path, media_base_url)}" class="trip-place-highlight-thumb" />'
+                                for t in (p.thumbnails or [])[:MAX_THUMBNAILS_PER_PLACE]
+                                if t.thumbnail_path
+                            )}
+                        </div>
+                    </div>'''
+                    for p in trip_highlight_places
+                )}
+            </div>
+            ''' if trip_highlight_places else ''}
             {day_rows}
         </section>
     </div>
@@ -1608,7 +1690,7 @@ def _render_page_html(
     if layout.page_type == PageType.MAP_ROUTE:
         return _render_map_route_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.TRIP_SUMMARY:
-        return _render_trip_summary_card(layout, theme, width_mm, height_mm)
+        return _render_trip_summary_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.PHOTO_GRID:
         return _render_photo_grid_from_elements(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.DAY_INTRO:
@@ -1729,20 +1811,24 @@ def _resolve_web_image_url(raw_path: str, media_base_url: str | None) -> str:
     """
     if not raw_path:
         return ""
+    # Already an absolute URL or data URI — return as-is
     if raw_path.startswith(("http://", "https://", "data:")):
         return raw_path
 
-    origin = ""
+    # Normalize the incoming media_base_url into a base that always points to /media
     if media_base_url:
-        if "/media" in media_base_url:
-            origin = media_base_url.split("/media")[0].rstrip("/")
-        else:
-            origin = media_base_url.rstrip("/")
+        base = media_base_url.rstrip("/")
+        if not base.endswith("/media"):
+            base = f"{base}/media"
+    else:
+        base = "/media"
 
-    if raw_path.startswith("/"):
-        return f"{origin}{raw_path}" if origin else raw_path
+    # Normalize raw_path to avoid duplicated "media/" segments
+    rp = raw_path.lstrip("/")
+    if rp.startswith("media/"):
+        rp = rp[len("media/"):]
 
-    return f"{origin}/{raw_path}" if origin else raw_path
+    return f"{base}/{rp}"
 
 
 def _generate_print_css(context: RenderContext) -> str:
