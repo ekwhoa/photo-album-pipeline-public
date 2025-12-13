@@ -41,6 +41,8 @@ import { useBookDedupeDebug } from '@/hooks/useBookDedupeDebug';
 import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
 import { useBookPlacesDebug } from '@/hooks/useBookPlacesDebug';
 import { useBookPhotoQuality } from '@/hooks/useBookPhotoQuality';
+import { useBookPhotoQualitySummary } from '@/hooks/useBookPhotoQualitySummary';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { useBookItinerary } from '@/hooks/useBookItinerary';
 import { toast } from 'sonner';
 
@@ -552,12 +554,23 @@ export default function BookDetailPage() {
                     </Button>
                   </div>
                 )}
-                <AssetGrid
-                  assets={filteredAssets}
-                  onUpdateStatus={handleUpdateStatus}
-                  selectedIds={selectedAssets}
-                  onSelectionChange={setSelectedAssets}
-                />
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="md:col-span-2">
+                    <AssetGrid
+                      assets={filteredAssets}
+                      onUpdateStatus={handleUpdateStatus}
+                      selectedIds={selectedAssets}
+                      onSelectionChange={setSelectedAssets}
+                    />
+                  </div>
+                  <div className="md:col-span-1">
+                    <PhotosQualitySuggestionsPanel
+                      bookId={id ?? ''}
+                      assetsById={assetsById}
+                      onUpdateStatus={handleUpdateStatus}
+                    />
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1245,6 +1258,75 @@ function PhotosQualityDebugPanel({ bookId }: { bookId: string }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function PhotosQualitySuggestionsPanel({
+  bookId,
+  assetsById,
+  onUpdateStatus,
+}: {
+  bookId: string;
+  assetsById: Record<string, Asset>;
+  onUpdateStatus: (assetId: string, status: 'approved' | 'rejected') => Promise<void>;
+}) {
+  const { data, loading, error } = useBookPhotoQualitySummary(bookId || undefined);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const asset = selectedAssetId ? assetsById[selectedAssetId] : null;
+
+  const openFor = (id: string) => {
+    setSelectedAssetId(id);
+    setDialogOpen(true);
+  };
+
+  if (loading) return <div className="text-sm text-muted-foreground">Loading quality suggestions…</div>;
+  if (error) return <div className="text-sm text-destructive">Failed to load quality suggestions.</div>;
+  if (!data || data.length === 0) return <div className="text-sm text-muted-foreground">No quality suggestions available yet.</div>;
+
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium">Quality suggestions</div>
+      <div className="space-y-2">
+        {data.map((s) => {
+          const a = assetsById[s.photo_id];
+          const filename = (s.file_path || s.photo_id || '').split('/').pop() || s.photo_id;
+          return (
+            <div key={s.photo_id} className="flex items-center gap-2 rounded-md border p-2 bg-background">
+              <img src={s.thumbnail_url ?? ''} alt={filename} className="h-10 w-10 rounded object-cover bg-muted" />
+              <div className="flex-1 text-xs">
+                <div className="font-medium truncate">{filename}</div>
+                <div className="text-[11px] text-muted-foreground truncate">
+                  Q: {s.quality_score.toFixed(3)} • {s.flags && s.flags.length > 0 ? s.flags[0] : ''}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Button size="sm" onClick={() => openFor(s.photo_id)}>View</Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{asset ? (asset.file_path.split('/').pop() || asset.id) : 'Photo'}</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            {asset ? (
+              <img src={asset.thumbnail_path ? getThumbnailUrl(asset) : getAssetUrl(asset)} alt="" className="max-h-64 w-full object-contain" />
+            ) : (
+              <div className="text-sm text-muted-foreground">Missing asset data</div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => { if (asset) onUpdateStatus(asset.id, 'rejected'); setDialogOpen(false); }}>Reject</Button>
+              <Button onClick={() => { if (asset) onUpdateStatus(asset.id, 'approved'); setDialogOpen(false); }}>Approve</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
