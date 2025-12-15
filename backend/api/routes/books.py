@@ -16,6 +16,7 @@ from services.timeline import TimelineService
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.places_enrichment import enrich_place_candidates_with_names
 from services.photo_quality import analyze_book_photos, PhotoQualityMetrics
+from services.duplicate_photos import find_duplicate_photos, DuplicateGroup
 from services.curation import filter_approved
 from settings import settings
 
@@ -167,6 +168,18 @@ class PhotoQualityMetricsSchema(BaseModel):
     quality_score: float
     face_count: Optional[int] = None
     flags: List[str] = Field(default_factory=list)
+
+
+class DuplicateGroupThumbnailSchema(BaseModel):
+    photo_id: str
+    thumbnail_url: Optional[str] = None
+
+
+class DuplicateGroupSchema(BaseModel):
+    photo_ids: List[str]
+    representative_id: str
+    scores: Optional[dict] = Field(default_factory=dict)
+    thumbnails: List[DuplicateGroupThumbnailSchema] = Field(default_factory=list)
 
 
 class PlaceOverrideUpdateSchema(BaseModel):
@@ -430,6 +443,45 @@ async def get_book_photo_quality(book_id: str):
             )
 
         return items
+
+
+@router.get("/{book_id}/photo-duplicates-debug", response_model=List[DuplicateGroupSchema])
+async def get_book_photo_duplicates_debug(book_id: str, max_groups: int = 50):
+    """Debug endpoint: compute lightweight duplicate-photo groups for a book.
+
+    This runs the heuristic detector on-demand and returns groups with at
+    least two photos. No DB writes are performed.
+    """
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        groups = find_duplicate_photos(book, storage, max_groups=max_groups)
+
+        # Build asset lookup to include thumbnail/file paths
+        assets = assets_repo.list_assets(session, book_id, status=None)
+        asset_lookup = {a.id: a for a in assets}
+
+        out: List[DuplicateGroupSchema] = []
+        for g in groups:
+            thumbs = []
+            for pid in g.photo_ids:
+                a = asset_lookup.get(pid)
+                rel = a.thumbnail_path if a and a.thumbnail_path else (a.file_path if a else None)
+                url = f"/media/{rel}" if rel else None
+                thumbs.append(DuplicateGroupThumbnailSchema(photo_id=pid, thumbnail_url=url))
+
+            out.append(
+                DuplicateGroupSchema(
+                    photo_ids=g.photo_ids,
+                    representative_id=g.representative_id,
+                    scores=g.scores or {},
+                    thumbnails=thumbs,
+                )
+            )
+
+        return out
 
 
 @router.post("/{book_id}/places/{stable_id}/override", response_model=PlaceCandidateSchema)
