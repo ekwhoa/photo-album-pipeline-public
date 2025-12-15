@@ -42,6 +42,7 @@ import { useBookSegmentDebug } from '@/hooks/useBookSegmentDebug';
 import { useBookPlacesDebug } from '@/hooks/useBookPlacesDebug';
 import { useBookPhotoQuality } from '@/hooks/useBookPhotoQuality';
 import { useBookPhotoQualitySummary } from '@/hooks/useBookPhotoQualitySummary';
+import { useBookPhotoDuplicates } from '@/hooks/useBookPhotoDuplicates';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { useBookItinerary } from '@/hooks/useBookItinerary';
 import { toast } from 'sonner';
@@ -451,9 +452,13 @@ export default function BookDetailPage() {
               <Layout className="h-4 w-4" />
               Preview
             </TabsTrigger>
-            <TabsTrigger value="photos-quality" className="gap-2">
+            <TabsTrigger value="quality-debug" className="gap-2">
               <Image className="h-4 w-4" />
               Quality (debug)
+            </TabsTrigger>
+            <TabsTrigger value="duplicates-debug" className="gap-2">
+              <Image className="h-4 w-4" />
+              Duplicates (debug)
             </TabsTrigger>
           </TabsList>
 
@@ -1069,7 +1074,7 @@ export default function BookDetailPage() {
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="photos-quality" className="space-y-6 animate-fade-in">
+          <TabsContent value="quality-debug" className="space-y-6 animate-fade-in">
             <Card>
               <CardHeader>
                 <div>
@@ -1079,6 +1084,20 @@ export default function BookDetailPage() {
               </CardHeader>
               <CardContent>
                 <PhotosQualityDebugPanel bookId={id ?? ''} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="duplicates-debug" className="space-y-6 animate-fade-in">
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>Photo duplicates (debug)</CardTitle>
+                  <CardDescription>Heuristic duplicate/near-duplicate groups (read-only).</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <PhotosDuplicatesDebugPanel bookId={book.id} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -1327,6 +1346,63 @@ function PhotosQualitySuggestionsPanel({
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+type PhotosDuplicatesDebugPanelProps = {
+  bookId: string;
+};
+
+function PhotosDuplicatesDebugPanel({ bookId }: PhotosDuplicatesDebugPanelProps) {
+  const { data, isLoading, error } = useBookPhotoDuplicates(bookId);
+
+  if (isLoading) {
+    return (
+      <p className="text-sm text-muted-foreground">Loading duplicate groups…</p>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="text-sm text-destructive">Failed to load duplicates: {error.message}</p>
+    );
+  }
+
+  const groups = data ?? [];
+
+  if (groups.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">No duplicate groups detected.</p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {groups.map((group, idx) => {
+        const thumbs = group.thumbnails ?? [];
+
+        return (
+          <div key={group.representativeId ?? idx} className="rounded-md border bg-card p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-medium">
+                Group {idx + 1} — {group.photoIds?.length ?? thumbs.length} photos
+              </div>
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto">
+              {thumbs.map((t) => (
+                <div key={t.photoId} className="flex flex-col items-center gap-1 text-xs">
+                  <img src={t.thumbnailUrl ?? ''} alt={t.photoId} className="h-20 w-20 rounded border object-cover" />
+                  {group.scores && group.scores[t.photoId] != null && (
+                    <span className="text-[11px] text-muted-foreground">sim: {group.scores[t.photoId].toFixed(3)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

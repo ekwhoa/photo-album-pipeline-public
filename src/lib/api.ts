@@ -143,6 +143,13 @@ export interface PhotoQualityMetrics {
   flags: string[];
 }
 
+export interface DuplicateGroupDebug {
+  photoIds: string[];
+  representativeId: string;
+  scores?: Record<string, number>;
+  thumbnails: { photoId: string; thumbnailUrl: string | null }[];
+}
+
 export interface UpdatePlaceOverridePayload {
   customName?: string | null;
   hidden?: boolean;
@@ -219,6 +226,21 @@ export const booksApi = {
         face_count: item.face_count ?? null,
         flags: (item.flags as string[] | undefined) ?? [],
       }))
+    ),
+  getBookPhotoDuplicates: (id: string): Promise<DuplicateGroupDebug[]> =>
+    apiRequest<any[]>(`/books/${id}/photo-duplicates-debug`).then((res) =>
+      (res || []).map((group) => {
+        const rawThumbs = (group as any).thumbnails ?? [];
+        return {
+          photoIds: (group.photo_ids ?? group.photoIds ?? []) as string[],
+          representativeId: String(group.representative_id ?? group.representativeId ?? ''),
+          scores: (group.scores as Record<string, number> | undefined) ?? undefined,
+          thumbnails: (rawThumbs || []).map((t: any) => ({
+            photoId: String(t.photo_id ?? t.photoId ?? ''),
+            thumbnailUrl: (t.thumbnail_url ?? t.thumbnailUrl ?? null) ? (String(t.thumbnail_url ?? t.thumbnailUrl).startsWith('http') ? String(t.thumbnail_url ?? t.thumbnailUrl) : `${API_BASE_URL}${String(t.thumbnail_url ?? t.thumbnailUrl)}`) : null,
+          })),
+        } as DuplicateGroupDebug;
+      })
     ),
   
   create: (data: { title: string; size: string }) =>
