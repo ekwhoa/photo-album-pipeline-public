@@ -187,6 +187,38 @@ class PlaceOverrideUpdateSchema(BaseModel):
     hidden: Optional[bool] = None
 
 
+class LikelyRejectSchema(BaseModel):
+    photo_id: str
+    thumbnail_url: Optional[str] = None
+    file_path: Optional[str] = None
+    quality_score: float
+    flags: List[str] = Field(default_factory=list)
+    reasons: List[str] = Field(default_factory=list)
+    current_status: Optional[str] = None
+
+
+class DuplicateSuggestionMemberSchema(BaseModel):
+    photo_id: str
+    similarity: float
+    quality_score: Optional[float] = None
+    flags: List[str] = Field(default_factory=list)
+
+
+class DuplicateSuggestionGroupSchema(BaseModel):
+    representative_id: str
+    keep_photo_id: str
+    reject_photo_ids: List[str]
+    members: List[DuplicateSuggestionMemberSchema] = Field(default_factory=list)
+    reasons: List[str] = Field(default_factory=list)
+
+
+class CurationSuggestionsSchema(BaseModel):
+    generated_at: str
+    params: dict
+    likely_rejects: List[LikelyRejectSchema] = Field(default_factory=list)
+    duplicate_groups: List[DuplicateSuggestionGroupSchema] = Field(default_factory=list)
+
+
 @router.get("/{book_id}/dedupe_debug", response_model=DedupeDebugResponse)
 async def dedupe_debug(book_id: str):
     """Return dedupe metadata for a book without altering existing endpoints."""
@@ -554,6 +586,38 @@ async def update_place_override(
                 )
 
         raise HTTPException(status_code=404, detail="Place not found")
+
+
+@router.get("/{book_id}/curation-suggestions", response_model=CurationSuggestionsSchema)
+async def get_book_curation_suggestions(book_id: str, max_likely_rejects: int = 50, max_duplicate_groups: int = 25):
+    """Compute combined curation suggestions (quality + duplicates) for a book."""
+    from services.curation_suggestions import compute_curation_suggestions
+
+    with SessionLocal() as session:
+        book = books_repo.get_book(session, book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        payload = compute_curation_suggestions(book, storage, max_likely_rejects=max_likely_rejects, max_duplicate_groups=max_duplicate_groups)
+
+        # Attach thumbnail/file info from assets
+        assets = assets_repo.list_assets(session, book_id, status=None)
+        asset_lookup = {a.id: a for a in assets}
+
+        # Patch likely_rejects and duplicate_groups to include thumbnail_url/file_path
+        for lr in payload.get("likely_rejects", []):
+            a = asset_lookup.get(lr.get("photo_id"))
+            rel = a.thumbnail_path if a and a.thumbnail_path else (a.file_path if a else None)
+            lr["thumbnail_url"] = f"/media/{rel}" if rel else None
+            lr["file_path"] = a.file_path if a else lr.get("file_path")
+
+        for dg in payload.get("duplicate_groups", []):
+            for member in dg.get("members", []):
+                a = asset_lookup.get(member.get("photo_id"))
+                rel = a.thumbnail_path if a and a.thumbnail_path else (a.file_path if a else None)
+                member["thumbnail_url"] = f"/media/{rel}" if rel else None
+
+        return payload
 
 
 @router.get("", response_model=List[BookResponse])

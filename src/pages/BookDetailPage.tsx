@@ -43,6 +43,7 @@ import { useBookPlacesDebug } from '@/hooks/useBookPlacesDebug';
 import { useBookPhotoQuality } from '@/hooks/useBookPhotoQuality';
 import { useBookPhotoQualitySummary } from '@/hooks/useBookPhotoQualitySummary';
 import { useBookPhotoDuplicates } from '@/hooks/useBookPhotoDuplicates';
+import { useBookCurationSuggestions } from '@/hooks/useBookCurationSuggestions';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { useBookItinerary } from '@/hooks/useBookItinerary';
 import { toast } from 'sonner';
@@ -569,11 +570,19 @@ export default function BookDetailPage() {
                     />
                   </div>
                   <div className="md:col-span-1">
-                    <PhotosQualitySuggestionsPanel
+                    <SmartCurationPanel
                       bookId={id ?? ''}
                       assetsById={assetsById}
                       onUpdateStatus={handleUpdateStatus}
+                      refreshParent={loadBook}
                     />
+                    <div className="mt-4">
+                      <PhotosQualitySuggestionsPanel
+                        bookId={id ?? ''}
+                        assetsById={assetsById}
+                        onUpdateStatus={handleUpdateStatus}
+                      />
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -1344,6 +1353,212 @@ function PhotosQualitySuggestionsPanel({
               <Button onClick={() => { if (asset) onUpdateStatus(asset.id, 'approved'); setDialogOpen(false); }}>Approve</Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function SmartCurationPanel({
+  bookId,
+  assetsById,
+  onUpdateStatus,
+  refreshParent,
+}: {
+  bookId: string;
+  assetsById: Record<string, Asset>;
+  onUpdateStatus: (assetId: string, status: 'approved' | 'rejected') => Promise<void>;
+  refreshParent: () => Promise<void>;
+}) {
+  const { data, isLoading, error, refetch } = useBookCurationSuggestions(bookId || undefined);
+  const [view, setView] = useState<'likely' | 'duplicates'>('likely');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingGroup, setPendingGroup] = useState<any | null>(null);
+
+  // modal state for viewing a single asset in-panel
+  const [scSelectedAsset, scSetSelectedAsset] = useState<string | null>(null);
+  const [scDialogOpen, scSetDialogOpen] = useState(false);
+  const openAssetModal = (assetId: string) => {
+    scSetSelectedAsset(assetId);
+    scSetDialogOpen(true);
+  };
+
+  const doRejectList = async (group: any) => {
+    const rejectIds: string[] = group.reject_photo_ids || [];
+    if (rejectIds.length === 0) return;
+    try {
+      // Reject others
+      await assetsApi.bulkUpdateStatus(bookId, rejectIds, 'rejected');
+      // Optionally approve keep
+      const keep = group.keep_photo_id;
+      if (keep) {
+        await assetsApi.updateStatus(bookId, keep, 'approved');
+      }
+      // refresh
+      await refreshParent();
+      await refetch();
+    } catch (err) {
+      console.error('Failed apply curation action', err);
+    }
+  };
+
+  if (isLoading) return <div className="text-sm text-muted-foreground">Loading smart curation…</div>;
+  if (error) return <div className="text-sm text-destructive">Smart curation unavailable: {error.message}</div>;
+  if (!data) return <div className="text-sm text-muted-foreground">No suggestions available.</div>;
+
+  const likely = data.likely_rejects || [];
+  const dups = data.duplicate_groups || [];
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-sm font-medium">Smart curation (beta)</div>
+        <div className="flex items-center gap-2">
+          <button
+            className={`text-sm ${view === 'likely' ? 'text-foreground font-semibold' : 'text-muted-foreground'}`}
+            onClick={() => setView('likely')}
+          >
+            Likely rejects
+          </button>
+          <button
+            className={`text-sm ${view === 'duplicates' ? 'text-foreground font-semibold' : 'text-muted-foreground'}`}
+            onClick={() => setView('duplicates')}
+          >
+            Duplicates
+          </button>
+        </div>
+      </div>
+
+      {view === 'likely' && (
+        <div className="space-y-2">
+          {likely.length === 0 && <div className="text-sm text-muted-foreground">No likely rejects detected.</div>}
+          {likely.map((item) => {
+            const a = assetsById[item.photo_id];
+            const filename = (item.file_path || item.photo_id || '').split('/').pop() || item.photo_id;
+            const assetForItem = assetsById[item.photo_id];
+            const itemThumb = assetForItem
+              ? (assetForItem.thumbnail_path ? getThumbnailUrl(assetForItem) : getAssetUrl(assetForItem))
+              : (item.thumbnail_url ?? null);
+            if (!itemThumb && process.env.NODE_ENV !== 'production') {
+              // helpful dev warning if thumbnail is missing
+              // eslint-disable-next-line no-console
+              console.warn('SmartCuration: missing thumbnail for', item.photo_id);
+            }
+
+            return (
+              <div key={item.photo_id} className="flex items-center gap-2 rounded-md border p-2 bg-background">
+                {itemThumb ? (
+                  <img
+                    src={itemThumb}
+                    alt={item.photo_id}
+                    className="h-10 w-10 rounded object-cover bg-muted"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/favicon.ico'; }}
+                    onClick={() => openAssetModal(item.photo_id)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                ) : (
+                  <div className="h-10 w-10 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">No thumbnail</div>
+                )}
+                <div className="flex-1 text-xs">
+                  <div className="font-medium truncate">{filename}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">Q: {item.quality_score.toFixed(3)}</div>
+                  <div className="mt-1 flex gap-1">
+                    {(item.reasons || []).slice(0,3).map((r: string) => (
+                      <span key={r} className="text-[11px] px-2 py-0.5 rounded bg-muted/30">{r}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Button size="sm" onClick={() => openAssetModal(item.photo_id)}>View</Button>
+                  <Button size="sm" variant="outline" onClick={() => onUpdateStatus(item.photo_id, 'rejected')}>Reject</Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view === 'duplicates' && (
+        <div className="space-y-3">
+          {dups.length === 0 && <div className="text-sm text-muted-foreground">No duplicate groups.</div>}
+          {dups.map((g) => (
+            <div key={g.representative_id} className="rounded-md border bg-card p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-medium">Group — {g.members.length} photos</div>
+                <div className="text-xs text-muted-foreground">{(g.reasons || []).join(' • ')}</div>
+              </div>
+              <div className="flex gap-2 overflow-x-auto mb-3">
+                {g.members.map((m) => {
+                  const assetForM = assetsById[m.photo_id];
+                  const mThumb = assetForM ? (assetForM.thumbnail_path ? getThumbnailUrl(assetForM) : getAssetUrl(assetForM)) : (m.thumbnail_url ?? null);
+                  if (!mThumb && process.env.NODE_ENV !== 'production') {
+                    // eslint-disable-next-line no-console
+                    console.warn('SmartCuration: missing thumbnail for duplicate member', m.photo_id);
+                  }
+                  return (
+                    <div key={m.photo_id} className="flex flex-col items-center gap-1 text-xs">
+                      {mThumb ? (
+                        <img
+                          src={mThumb}
+                          alt={m.photo_id}
+                          className="h-20 w-20 rounded object-cover border"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/favicon.ico'; }}
+                          onClick={() => openAssetModal(m.photo_id)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      ) : (
+                        <div className="h-20 w-20 rounded border bg-muted flex items-center justify-center text-xs text-muted-foreground">No thumbnail</div>
+                      )}
+                      <div className="text-[11px] text-muted-foreground">sim: {m.similarity.toFixed(3)}</div>
+                      {g.keep_photo_id === m.photo_id && <div className="text-[11px] text-success">KEEP</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={() => { setPendingGroup(g); setConfirmOpen(true); }}>Keep best, reject rest</Button>
+                <Button size="sm" variant="ghost" onClick={() => { openAssetModal(g.keep_photo_id); }}>View</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={scDialogOpen} onOpenChange={scSetDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{scSelectedAsset ? (assetsById[scSelectedAsset]?.file_path?.split('/').pop() || scSelectedAsset) : 'Photo'}</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            {scSelectedAsset ? (
+              <img
+                src={assetsById[scSelectedAsset] ? (assetsById[scSelectedAsset].thumbnail_path ? getThumbnailUrl(assetsById[scSelectedAsset]) : getAssetUrl(assetsById[scSelectedAsset])) : ''}
+                alt=""
+                className="max-h-64 w-full object-contain"
+              />
+            ) : (
+              <div className="text-sm text-muted-foreground">Missing asset data</div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => { if (scSelectedAsset) onUpdateStatus(scSelectedAsset, 'rejected'); scSetDialogOpen(false); }}>Reject</Button>
+              <Button onClick={() => { if (scSelectedAsset) onUpdateStatus(scSelectedAsset, 'approved'); scSetDialogOpen(false); }}>Approve</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm curation action</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <p className="text-sm">This will reject {pendingGroup ? pendingGroup.reject_photo_ids.length : 0} photo(s). This cannot be undone here (you can re-approve later).</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button onClick={async () => { if (pendingGroup) await doRejectList(pendingGroup); setConfirmOpen(false); }}>Confirm</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

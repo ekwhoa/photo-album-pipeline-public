@@ -150,6 +150,39 @@ export interface DuplicateGroupDebug {
   thumbnails: { photoId: string; thumbnailUrl: string | null }[];
 }
 
+export interface LikelyReject {
+  photo_id: string;
+  thumbnail_url?: string | null;
+  file_path?: string | null;
+  quality_score: number;
+  flags: string[];
+  reasons: string[];
+  current_status?: string | null;
+}
+
+export interface DuplicateSuggestionMember {
+  photo_id: string;
+  similarity: number;
+  quality_score?: number | null;
+  flags: string[];
+  thumbnail_url?: string | null;
+}
+
+export interface DuplicateSuggestionGroup {
+  representative_id: string;
+  keep_photo_id: string;
+  reject_photo_ids: string[];
+  members: DuplicateSuggestionMember[];
+  reasons: string[];
+}
+
+export interface CurationSuggestions {
+  generated_at: string;
+  params: Record<string, any>;
+  likely_rejects: LikelyReject[];
+  duplicate_groups: DuplicateSuggestionGroup[];
+}
+
 export interface UpdatePlaceOverridePayload {
   customName?: string | null;
   hidden?: boolean;
@@ -242,6 +275,36 @@ export const booksApi = {
         } as DuplicateGroupDebug;
       })
     ),
+  getCurationSuggestions: (id: string): Promise<CurationSuggestions> =>
+    apiRequest<any>(`/books/${id}/curation-suggestions`).then((raw) => {
+      const data: CurationSuggestions = {
+        generated_at: String(raw.generated_at ?? ''),
+        params: raw.params ?? {},
+        likely_rejects: (raw.likely_rejects || []).map((r: any) => ({
+          photo_id: String(r.photo_id ?? ''),
+          thumbnail_url: r.thumbnail_url ? (String(r.thumbnail_url).startsWith('http') ? String(r.thumbnail_url) : `${API_BASE_URL}${String(r.thumbnail_url)}`) : null,
+          file_path: r.file_path ?? null,
+          quality_score: Number(r.quality_score ?? 0),
+          flags: (r.flags as string[] | undefined) ?? [],
+          reasons: (r.reasons as string[] | undefined) ?? [],
+          current_status: r.current_status ?? null,
+        })),
+        duplicate_groups: (raw.duplicate_groups || []).map((g: any) => ({
+          representative_id: String(g.representative_id ?? ''),
+          keep_photo_id: String(g.keep_photo_id ?? ''),
+          reject_photo_ids: (g.reject_photo_ids || []).map((x: any) => String(x)),
+          members: (g.members || []).map((m: any) => ({
+            photo_id: String(m.photo_id ?? ''),
+            similarity: Number(m.similarity ?? 0),
+            quality_score: m.quality_score == null ? null : Number(m.quality_score),
+            flags: (m.flags as string[] | undefined) ?? [],
+            thumbnail_url: m.thumbnail_url ? (String(m.thumbnail_url).startsWith('http') ? String(m.thumbnail_url) : `${API_BASE_URL}${String(m.thumbnail_url)}`) : null,
+          })),
+          reasons: (g.reasons as string[] | undefined) ?? [],
+        })),
+      };
+      return data;
+    }),
   
   create: (data: { title: string; size: string }) =>
     apiRequest<Book>('/books', {
