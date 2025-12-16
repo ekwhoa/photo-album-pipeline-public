@@ -1378,6 +1378,8 @@ function SmartCurationPanel({
   // modal state for viewing a single asset in-panel
   const [scSelectedAsset, scSetSelectedAsset] = useState<string | null>(null);
   const [scDialogOpen, scSetDialogOpen] = useState(false);
+  const [scSaving, scSetSaving] = useState(false);
+  const [confirmSaving, setConfirmSaving] = useState(false);
   const openAssetModal = (assetId: string) => {
     scSetSelectedAsset(assetId);
     scSetDialogOpen(true);
@@ -1540,8 +1542,49 @@ function SmartCurationPanel({
               <div className="text-sm text-muted-foreground">Missing asset data</div>
             )}
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => { if (scSelectedAsset) onUpdateStatus(scSelectedAsset, 'rejected'); scSetDialogOpen(false); }}>Reject</Button>
-              <Button onClick={() => { if (scSelectedAsset) onUpdateStatus(scSelectedAsset, 'approved'); scSetDialogOpen(false); }}>Approve</Button>
+              <Button
+                variant="outline"
+                disabled={scSaving}
+                onClick={async () => {
+                  if (!scSelectedAsset) return;
+                  scSetSaving(true);
+                  try {
+                    await onUpdateStatus(scSelectedAsset, 'rejected');
+                    await refreshParent();
+                    await refetch();
+                    scSetDialogOpen(false);
+                    toast.success('Photo rejected');
+                  } catch (err) {
+                    console.error('Failed to reject from sc dialog', err);
+                    toast.error('Failed to reject photo');
+                  } finally {
+                    scSetSaving(false);
+                  }
+                }}
+              >
+                Reject
+              </Button>
+              <Button
+                disabled={scSaving}
+                onClick={async () => {
+                  if (!scSelectedAsset) return;
+                  scSetSaving(true);
+                  try {
+                    await onUpdateStatus(scSelectedAsset, 'approved');
+                    await refreshParent();
+                    await refetch();
+                    scSetDialogOpen(false);
+                    toast.success('Photo approved');
+                  } catch (err) {
+                    console.error('Failed to approve from sc dialog', err);
+                    toast.error('Failed to approve photo');
+                  } finally {
+                    scSetSaving(false);
+                  }
+                }}
+              >
+                Approve
+              </Button>
             </div>
           </div>
         </DialogContent>
@@ -1556,8 +1599,33 @@ function SmartCurationPanel({
             <p className="text-sm">This will reject {pendingGroup ? pendingGroup.reject_photo_ids.length : 0} photo(s). This cannot be undone here (you can re-approve later).</p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
-            <Button onClick={async () => { if (pendingGroup) await doRejectList(pendingGroup); setConfirmOpen(false); }}>Confirm</Button>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={confirmSaving}>Cancel</Button>
+            <Button
+              disabled={confirmSaving}
+              onClick={async () => {
+                if (!pendingGroup) return;
+                setConfirmSaving(true);
+                try {
+                  await doRejectList(pendingGroup);
+                  setConfirmOpen(false);
+                  toast.success('Curation applied');
+                } catch (err) {
+                  console.error('Failed to apply curation action', err);
+                  toast.error('Failed to apply curation action');
+                } finally {
+                  setConfirmSaving(false);
+                  // ensure we refresh suggestions regardless
+                  try {
+                    await refetch();
+                    await refreshParent();
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+              }}
+            >
+              Confirm
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
