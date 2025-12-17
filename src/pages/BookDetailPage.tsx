@@ -1370,7 +1370,10 @@ function SmartCurationPanel({
   onUpdateStatus: (assetId: string, status: 'approved' | 'rejected') => Promise<void>;
   refreshParent: () => Promise<void>;
 }) {
-  const { data, isLoading, error, refetch } = useBookCurationSuggestions(bookId || undefined);
+  // user-triggered run state
+  const [hasRun, setHasRun] = useState(false);
+  const { data, isLoading, error, refetch } = useBookCurationSuggestions(bookId || undefined, { enabled: hasRun });
+  const [localData, setLocalData] = useState<any | null>(null);
   const [view, setView] = useState<'likely' | 'duplicates'>('likely');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingGroup, setPendingGroup] = useState<any | null>(null);
@@ -1398,18 +1401,49 @@ function SmartCurationPanel({
       }
       // refresh
       await refreshParent();
-      await refetch();
+      // optimistic local update: remove rejected ids from localData
+      setLocalData((prev: any) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        if (next.likely_rejects) {
+          next.likely_rejects = next.likely_rejects.filter((r: any) => !rejectIds.includes(r.photo_id));
+        }
+        if (next.duplicate_groups) {
+          next.duplicate_groups = next.duplicate_groups.map((dg: any) => {
+            const members = (dg.members || []).filter((m: any) => !rejectIds.includes(m.photo_id));
+            return { ...dg, members };
+          }).filter((dg: any) => (dg.members || []).length > 0);
+        }
+        return next;
+      });
     } catch (err) {
       console.error('Failed apply curation action', err);
     }
   };
 
-  if (isLoading) return <div className="text-sm text-muted-foreground">Loading smart curation…</div>;
-  if (error) return <div className="text-sm text-destructive">Smart curation unavailable: {error.message}</div>;
-  if (!data) return <div className="text-sm text-muted-foreground">No suggestions available.</div>;
+  // prefer localData for rendering so we can apply optimistic updates
+  useEffect(() => {
+    if (data) setLocalData(data);
+  }, [data]);
 
-  const likely = data.likely_rejects || [];
-  const dups = data.duplicate_groups || [];
+  if (!hasRun) {
+    return (
+      <div className="p-3 rounded-md border bg-muted/40">
+        <div className="text-sm font-medium mb-2">Smart curation (beta)</div>
+        <div className="text-sm text-muted-foreground mb-3">Run an optional, read-only analysis that suggests likely rejects and duplicate groups. This may take a few seconds.</div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setHasRun(true)}>Run Smart curation (beta)</Button>
+          <Button size="sm" variant="ghost" onClick={() => { setHasRun(true); }}>Run and view</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading && !localData) return <div className="text-sm text-muted-foreground">Running smart curation…</div>;
+  if (error && !localData) return <div className="text-sm text-destructive">Smart curation unavailable: {error.message}</div>;
+
+  const likely = (localData && localData.likely_rejects) || [];
+  const dups = (localData && localData.duplicate_groups) || [];
 
   return (
     <div>
@@ -1428,6 +1462,16 @@ function SmartCurationPanel({
           >
             Duplicates
           </button>
+          <Button size="xs" variant="ghost" onClick={async () => {
+            try {
+              const r = await refetch();
+              if (r && (r as any).data) setLocalData((r as any).data);
+              toast.success('Suggestions refreshed');
+            } catch (e) {
+              console.error('Failed to refresh suggestions', e);
+              toast.error('Failed to refresh suggestions');
+            }
+          }}>Refresh suggestions</Button>
         </div>
       </div>
 
@@ -1543,6 +1587,8 @@ function SmartCurationPanel({
             )}
             <div className="flex gap-2 justify-end">
               <Button
+                size="sm"
+                className="px-2 py-1 text-sm"
                 variant="outline"
                 disabled={scSaving}
                 onClick={async () => {
@@ -1551,7 +1597,17 @@ function SmartCurationPanel({
                   try {
                     await onUpdateStatus(scSelectedAsset, 'rejected');
                     await refreshParent();
-                    await refetch();
+                    // optimistic local update: remove from localData
+                    setLocalData((prev: any) => {
+                      if (!prev) return prev;
+                      const next = { ...prev };
+                      next.likely_rejects = (next.likely_rejects || []).filter((r: any) => r.photo_id !== scSelectedAsset);
+                      next.duplicate_groups = (next.duplicate_groups || []).map((dg: any) => ({
+                        ...dg,
+                        members: (dg.members || []).filter((m: any) => m.photo_id !== scSelectedAsset),
+                      })).filter((dg: any) => (dg.members || []).length > 0);
+                      return next;
+                    });
                     scSetDialogOpen(false);
                     toast.success('Photo rejected');
                   } catch (err) {
@@ -1565,6 +1621,8 @@ function SmartCurationPanel({
                 Reject
               </Button>
               <Button
+                size="sm"
+                className="px-2 py-1 text-sm"
                 disabled={scSaving}
                 onClick={async () => {
                   if (!scSelectedAsset) return;
@@ -1572,7 +1630,13 @@ function SmartCurationPanel({
                   try {
                     await onUpdateStatus(scSelectedAsset, 'approved');
                     await refreshParent();
-                    await refetch();
+                    // optimistic: remove from likely_rejects if present
+                    setLocalData((prev: any) => {
+                      if (!prev) return prev;
+                      const next = { ...prev };
+                      next.likely_rejects = (next.likely_rejects || []).filter((r: any) => r.photo_id !== scSelectedAsset);
+                      return next;
+                    });
                     scSetDialogOpen(false);
                     toast.success('Photo approved');
                   } catch (err) {
@@ -1599,8 +1663,9 @@ function SmartCurationPanel({
             <p className="text-sm">This will reject {pendingGroup ? pendingGroup.reject_photo_ids.length : 0} photo(s). This cannot be undone here (you can re-approve later).</p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={confirmSaving}>Cancel</Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirmOpen(false)} disabled={confirmSaving}>Cancel</Button>
             <Button
+              size="sm"
               disabled={confirmSaving}
               onClick={async () => {
                 if (!pendingGroup) return;
@@ -1614,13 +1679,11 @@ function SmartCurationPanel({
                   toast.error('Failed to apply curation action');
                 } finally {
                   setConfirmSaving(false);
-                  // ensure we refresh suggestions regardless
+                  // background refresh
                   try {
-                    await refetch();
-                    await refreshParent();
-                  } catch (e) {
-                    // ignore
-                  }
+                    setTimeout(() => { try { refetch(); } catch (e) {} }, 700);
+                    refreshParent();
+                  } catch (e) {}
                 }
               }}
             >
