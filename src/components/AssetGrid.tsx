@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Asset } from '@/lib/api';
-import { getThumbnailUrl } from '@/lib/api';
+import Thumbnail from '@/components/Thumbnail';
 
 interface AssetGridProps {
   assets: Asset[];
@@ -68,12 +68,11 @@ export function AssetGrid({
                 <ImageOff className="h-8 w-8 text-muted-foreground" />
               </div>
             ) : (
-              <img
-                src={getThumbnailUrl(asset)}
+              <Thumbnail
+                asset={asset}
                 alt=""
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full"
                 onError={() => handleImageError(asset.id)}
-                loading="lazy"
               />
             )}
 

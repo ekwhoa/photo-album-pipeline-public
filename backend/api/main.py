@@ -75,6 +75,37 @@ app.include_router(assets.router, prefix="/books/{book_id}/assets", tags=["asset
 app.include_router(pipeline.router, prefix="/books/{book_id}", tags=["pipeline"])
 
 
+@app.middleware("http")
+async def media_cache_middleware(request: Request, call_next):
+    """Add caching headers for media static responses and light ETag/Last-Modified.
+
+    This middleware is simple: for paths under /media we'll set Cache-Control and
+    attempt to set Last-Modified and ETag based on the file's mtime and size.
+    """
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        if path.startswith("/media/") and response.status_code == 200:
+            # derive local file path
+            rel = path[len("/media/"):]
+            file_path = media_path.joinpath(rel)
+            if file_path.exists():
+                stat = file_path.stat()
+                # Cache for one week
+                response.headers["Cache-Control"] = "public, max-age=604800, immutable"
+                # Last-Modified
+                from email.utils import formatdate
+
+                lm = formatdate(stat.st_mtime, usegmt=True)
+                response.headers.setdefault("Last-Modified", lm)
+                # ETag (weak) based on mtime and size
+                etag = f'W/"{stat.st_mtime:.0f}-{stat.st_size}"'
+                response.headers.setdefault("ETag", etag)
+    except Exception:
+        pass
+    return response
+
+
 @app.on_event("startup")
 def startup_event():
     """Initialize database tables on startup."""
