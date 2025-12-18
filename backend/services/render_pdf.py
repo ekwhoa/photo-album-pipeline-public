@@ -22,6 +22,7 @@ from services.itinerary import build_book_itinerary, build_place_candidates, Pla
 from services.places_enrichment import enrich_place_candidates_with_names
 from services.manifest import build_manifest
 from services.timeline import build_days_and_events
+from services.face_crop import compute_face_focus
 logger = logging.getLogger(__name__)
 
 
@@ -462,7 +463,39 @@ def _render_photo_grid_from_elements(
                     candidate_path = Path(candidate)
                     if not candidate_path.is_absolute():
                         candidate_path = Path(media_root) / candidate_path
-                    img_src = candidate_path.resolve().as_uri()
+                    # For PDF-rendered hero/full-page images, attempt a face-safe crop
+                    try:
+                        frac_w = (elem.width_mm or 0) / width_mm if width_mm else 0
+                        frac_h = (elem.height_mm or 0) / height_mm if height_mm else 0
+                        is_hero = frac_w >= 0.7 or frac_h >= 0.7
+                    except Exception:
+                        is_hero = False
+                    if is_hero:
+                        # Use face focus to guide rendering. If no face focus is found
+                        # the renderer should fall back to center-crop (do not write files).
+                        try:
+                            focus = compute_face_focus(str(candidate_path))
+                            if focus:
+                                # When a focus is available, instruct WeasyPrint to use
+                                # the full image but we can rely on CSS object-position to
+                                # center the face. We'll still provide the full file URI.
+                                img_src = candidate_path.resolve().as_uri()
+                                # embed focus information as data-attr so CSS can be adjusted
+                                # Note: WeasyPrint doesn't support custom data attributes for
+                                # positioning; instead we set style with object-position here.
+                                ox = f"{focus['center_x_pct'] * 100:.2f}%"
+                                oy = f"{focus['center_y_pct'] * 100:.2f}%"
+                                # attach style to the img tag below via a placeholder
+                                img_style = f"object-fit:cover;object-position:{ox} {oy};"
+                            else:
+                                img_src = candidate_path.resolve().as_uri()
+                                img_style = "object-fit:cover;object-position:50% 50%;"
+                        except Exception:
+                            img_src = candidate_path.resolve().as_uri()
+                            img_style = "object-fit:cover;object-position:50% 50%;"
+                    
+                    else:
+                        img_src = candidate_path.resolve().as_uri()
             else:
                 img_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
         elif elem.asset_id and elem.asset_id in assets:
@@ -472,12 +505,38 @@ def _render_photo_grid_from_elements(
                 candidate_path = Path(normalized_path)
                 if not candidate_path.is_absolute():
                     candidate_path = Path(media_root) / candidate_path
-                img_src = candidate_path.resolve().as_uri()
+                # If this element is a hero/full-page photo, produce a face-safe cropped
+                # file on disk and use that for PDF rendering. Otherwise use the original.
+                try:
+                    frac_w = (elem.width_mm or 0) / width_mm if width_mm else 0
+                    frac_h = (elem.height_mm or 0) / height_mm if height_mm else 0
+                    is_hero = frac_w >= 0.7 or frac_h >= 0.7
+                except Exception:
+                    is_hero = False
+                if is_hero:
+                    try:
+                        focus = compute_face_focus(str(candidate_path))
+                        if focus:
+                            img_src = candidate_path.resolve().as_uri()
+                            ox = f"{focus['center_x_pct'] * 100:.2f}%"
+                            oy = f"{focus['center_y_pct'] * 100:.2f}%"
+                            img_style = f"object-fit:cover;object-position:{ox} {oy};"
+                        else:
+                            img_src = candidate_path.resolve().as_uri()
+                            img_style = "object-fit:cover;object-position:50% 50%;"
+                    except Exception:
+                        img_src = candidate_path.resolve().as_uri()
+                        img_style = "object-fit:cover;object-position:50% 50%;"
+                else:
+                    img_src = candidate_path.resolve().as_uri()
+                    img_style = "object-fit:cover;object-position:50% 50%;"
             else:
                 base = media_base_url.rstrip("/") if media_base_url else "/media"
                 img_src = f"{base}/{normalized_path}"
 
         if img_src:
+            # Use computed img_style when available
+            style_attr = img_style if 'img_style' in locals() else "object-fit:cover;object-position:50% 50%;"
             elements_html.append(f"""
                 <div style="
                     position: absolute;
@@ -488,7 +547,7 @@ def _render_photo_grid_from_elements(
                     overflow: hidden;
                     border-radius: 4px;
                 ">
-                    <img src="{img_src}" style="width:100%;height:100%;object-fit:cover;" />
+                    <img src="{img_src}" style="width:100%;height:100%;{style_attr}" />
                 </div>
             """)
         elif elem.text:

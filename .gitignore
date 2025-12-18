@@ -52,6 +52,9 @@ backend/media/
 backend/data/
 backend/*.sqlite
 backend/*.sqlite3
+# Prevent accidental repo-root debug artifacts
+data/face_crops/
+backend/data/face_crops_debug/
 
 # Node / frontend (if you install locally)
 node_modules/
