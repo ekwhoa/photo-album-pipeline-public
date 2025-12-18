@@ -6,6 +6,7 @@ from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+import time
 
 from db import SessionLocal
 from domain.models import Book, BookSize, PageType
@@ -25,6 +26,10 @@ books_repo = BooksRepository()
 assets_repo = AssetsRepository()
 storage = FileStorage()
 logger = logging.getLogger(__name__)
+
+# In-process cache for curation suggestions
+CURATION_SUGGESTIONS_CACHE: dict = {}
+CURATION_SUGGESTIONS_TTL_SECONDS = 10 * 60  # 10 minutes
 
 
 class BookCreate(BaseModel):
@@ -589,7 +594,13 @@ async def update_place_override(
 
 
 @router.get("/{book_id}/curation-suggestions", response_model=CurationSuggestionsSchema)
-async def get_book_curation_suggestions(book_id: str, max_likely_rejects: int = 50, max_duplicate_groups: int = 25):
+async def get_book_curation_suggestions(
+    book_id: str,
+    max_likely_rejects: int = 50,
+    max_duplicate_groups: int = 25,
+    force: int = 0,
+    max_photos_for_analysis: Optional[int] = None,
+):
     """Compute combined curation suggestions (quality + duplicates) for a book."""
     from services.curation_suggestions import compute_curation_suggestions
 
@@ -598,7 +609,23 @@ async def get_book_curation_suggestions(book_id: str, max_likely_rejects: int = 
         if not book:
             raise HTTPException(status_code=404, detail="Book not found")
 
+        cache_key = (book_id, int(max_likely_rejects), int(max_duplicate_groups), int(max_photos_for_analysis) if max_photos_for_analysis else 0)
+        now = time.time()
+        cached = CURATION_SUGGESTIONS_CACHE.get(cache_key)
+        if cached and not force:
+            payload, ts = cached
+            age = now - ts
+            if age < CURATION_SUGGESTIONS_TTL_SECONDS:
+                logger.debug(f"curation-suggestions: cache hit for {book_id} (age={age:.1f}s)")
+                # We will still patch thumbnail/file_path below (cheap), so return a copy
+                payload_copy = dict(payload)
+                return payload_copy
+
+        logger.debug(f"curation-suggestions: cache miss for {book_id} (force={force})")
+
+        t_start = time.time()
         payload = compute_curation_suggestions(book, storage, max_likely_rejects=max_likely_rejects, max_duplicate_groups=max_duplicate_groups)
+        t_compute = time.time()
 
         # Attach thumbnail/file info from assets
         assets = assets_repo.list_assets(session, book_id, status=None)
@@ -616,6 +643,21 @@ async def get_book_curation_suggestions(book_id: str, max_likely_rejects: int = 
                 a = asset_lookup.get(member.get("photo_id"))
                 rel = a.thumbnail_path if a and a.thumbnail_path else (a.file_path if a else None)
                 member["thumbnail_url"] = f"/media/{rel}" if rel else None
+
+        t_patch = time.time()
+        # Cache the fully patched payload
+        try:
+            CURATION_SUGGESTIONS_CACHE[cache_key] = (payload, time.time())
+            logger.debug(f"curation-suggestions: cached payload for {book_id}")
+        except Exception:
+            logger.debug("curation-suggestions: failed to cache payload")
+
+        logger.info(
+            "/curation-suggestions timings (ms) compute=%.1f patch=%.1f total=%.1f",
+            (t_compute - t_start) * 1000.0,
+            (t_patch - t_compute) * 1000.0,
+            (time.time() - t_start) * 1000.0,
+        )
 
         return payload
 

@@ -9,6 +9,8 @@ from services.duplicate_photos import find_duplicate_photos, DuplicateGroup
 
 logger = logging.getLogger(__name__)
 
+import time
+
 # Tunable constants
 MAX_LIKELY_REJECTS_DEFAULT = 50
 MAX_DUPLICATE_GROUPS_DEFAULT = 25
@@ -44,8 +46,12 @@ def compute_curation_suggestions(book, storage, max_likely_rejects: int = MAX_LI
 
     Returns a serializable dict suitable for API responses.
     """
+    t0 = time.monotonic()
+
     # Compute quality metrics
+    t_start_quality = time.monotonic()
     quality_list = analyze_book_photos(book, storage)
+    t_end_quality = time.monotonic()
     metrics_by_id: Dict[str, PhotoQualityMetrics] = {m.photo_id: m for m in quality_list}
 
     # Build metadata lookup via assets repository indirectly by reading metrics' file paths
@@ -54,7 +60,9 @@ def compute_curation_suggestions(book, storage, max_likely_rejects: int = MAX_LI
     meta_by_id: Dict[str, Dict[str, Any]] = {}
 
     # Duplicate groups
+    t_start_dup = time.monotonic()
     dup_groups = find_duplicate_photos(book, storage, max_groups=max_duplicate_groups)
+    t_end_dup = time.monotonic()
 
     # Build duplicate suggestions
     duplicate_suggestions = []
@@ -125,5 +133,17 @@ def compute_curation_suggestions(book, storage, max_likely_rejects: int = MAX_LI
         "likely_rejects": likely_rejects,
         "duplicate_groups": duplicate_suggestions,
     }
+
+    t_end = time.monotonic()
+    try:
+        logger.info(
+            "compute_curation_suggestions timings ms: total=%.1f quality=%.1f duplicates=%.1f build=%.1f",
+            (t_end - t0) * 1000.0,
+            (t_end_quality - t_start_quality) * 1000.0,
+            (t_end_dup - t_start_dup) * 1000.0,
+            (t_end - t_end_dup) * 1000.0,
+        )
+    except Exception:
+        logger.debug("compute_curation_suggestions timing log failed")
 
     return result
