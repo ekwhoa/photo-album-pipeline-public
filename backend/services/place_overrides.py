@@ -20,10 +20,20 @@ class PlaceOverride:
 
 
 class PlaceOverridesStore:
-    """SQLite store for place overrides, keyed by (book_id, stable_id)."""
+    """SQLite store for place overrides, keyed by (book_id, stable_id).
 
-    def __init__(self, db_path: str = "data/place_overrides.sqlite"):
-        self.db_path = Path(db_path)
+    By default the DB is placed under the package-local `backend/data/`
+    directory (not relative to the current working directory). This avoids
+    creating duplicate DB files when processes are started from different
+    working directories.
+    """
+
+    DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "place_overrides.sqlite"
+
+    def __init__(self, db_path: Optional[str] = None):
+        # If db_path is provided, honor it (useful for tests). Otherwise use
+        # the package-local default under backend/data.
+        self.db_path = Path(db_path) if db_path else self.DEFAULT_DB
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 

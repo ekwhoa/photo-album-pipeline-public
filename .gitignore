@@ -56,6 +56,12 @@ backend/*.sqlite3
 data/face_crops/
 backend/data/face_crops_debug/
 
+# Test artifacts from fixture runs
+backend/tests/artifacts/
+
+# Ignore generated fixture images (keeps repo small; replace with real images if desired)
+backend/tests/fixtures/images/
+
 # Node / frontend (if you install locally)
 node_modules/
 dist/

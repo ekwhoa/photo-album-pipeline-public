@@ -28,5 +28,9 @@ requests-cache>=1.2.0
 # Testing / HTTP client
 httpx>=0.27.0
 
+# Optional: thumbnail generation (install to enable PDF->PNG thumbnails)
+# PyMuPDF is recommended for fast, pure-Python PDF page rendering on Windows/Linux
+pymupdf>=1.22.0
+
 # Future: S3 storage
 # boto3>=1.28.0

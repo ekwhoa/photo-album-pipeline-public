@@ -941,6 +941,7 @@ def _render_itinerary_page(
 
 def _render_map_route_card(
     layout: PageLayout,
+    assets: Dict[str, Asset],
     theme: Theme,
     width_mm: float,
     height_mm: float,
@@ -961,6 +962,21 @@ def _render_map_route_card(
                 image_src = elem.image_path or ""
             else:
                 image_src = _resolve_web_image_url(elem.image_url or "", media_base_url)
+        # If an asset_id was provided, allow falling back to the asset file
+        # (useful for fixtures or when a pre-rendered map image is supplied).
+        elif getattr(elem, "asset_id", None) and not image_src:
+            aid = elem.asset_id
+            if aid in assets:
+                asset = assets[aid]
+                normalized_path = asset.file_path.replace("\\", "/")
+                if mode == "pdf":
+                    candidate_path = Path(normalized_path)
+                    if not candidate_path.is_absolute():
+                        candidate_path = Path(media_root) / candidate_path
+                    image_src = candidate_path.resolve().as_uri()
+                else:
+                    base = media_base_url.rstrip("/") if media_base_url else "/media"
+                    image_src = f"{base}/{normalized_path}"
         elif elem.text:
             # Keep the first text element as title if it looks like one; otherwise treat as stats text.
             if title == "Trip Route" and elem.text.lower().startswith("trip route"):
@@ -1846,7 +1862,7 @@ def _render_page_html(
     if layout.page_type == PageType.BLANK:
         return _render_blank_page(theme, width_mm, height_mm)
     if layout.page_type == PageType.MAP_ROUTE:
-        return _render_map_route_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
+        return _render_map_route_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.TRIP_SUMMARY:
         return _render_trip_summary_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.PHOTO_GRID:

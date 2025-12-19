@@ -140,3 +140,31 @@ Alternative: Install reportlab for simpler PDF output (uncomment in requirements
 
 1. Implement `S3Storage` class in `storage/file_storage.py`
 2. Update API routes to use the new storage backend
+
+## Fixture PDF regression harness
+
+This repository includes a small regression harness that renders a deterministic
+fixture "golden" book and produces per-page thumbnails for quick visual
+inspection.
+
+Run it locally from the repo root:
+
+```bash
+cd backend
+python -m backend.scripts.render_fixture_book
+```
+
+Outputs are written to `backend/tests/artifacts/fixture_run/` (ignored by git).
+If you want tighter regression checks later, you can commit small PNG
+baselines and compare with a pixel tolerance.
+
+Thumbnails: If you want the harness to generate per-page PNG thumbnails, install
+PyMuPDF first:
+
+```bash
+pip install pymupdf
+```
+
+On Windows, install into your backend virtualenv and then run the harness as
+shown above. The harness will still produce the PDF without PyMuPDF, but
+thumbnail generation will be skipped.
