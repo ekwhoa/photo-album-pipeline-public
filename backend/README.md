@@ -168,3 +168,20 @@ pip install pymupdf
 On Windows, install into your backend virtualenv and then run the harness as
 shown above. The harness will still produce the PDF without PyMuPDF, but
 thumbnail generation will be skipped.
+
+Smoke checks (CI):
+
+- The harness now performs lightweight smoke assertions after rendering and will
+   exit nonzero if expected artifacts are missing or unexpectedly small. These
+   checks verify the generated PDF and that the `map_route` images were
+   produced. They are intentionally conservative (no binary baselines are
+   committed).
+
+- To run the harness in CI use:
+
+```bash
+PYTHONPATH=backend python -m backend.scripts.render_fixture_book
+```
+
+If you need thumbnails produced in CI, install `pymupdf` in the environment
+used by the job.

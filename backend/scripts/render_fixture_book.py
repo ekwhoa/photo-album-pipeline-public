@@ -265,6 +265,70 @@ def main():
     print(f"PDF: {out_pdf}")
     print(f"Pages dir: {pages_dir}")
 
+    # --- Smoke assertions for CI / smoke checks ---
+    MIN_PDF_BYTES = 50 * 1024
+    MIN_PNG_BYTES = 5 * 1024
+
+    ok_checks = []
+
+    # PDF exists and is reasonably large
+    try:
+        pdf_bytes = out_pdf.stat().st_size
+        assert pdf_bytes > MIN_PDF_BYTES, f"PDF too small ({pdf_bytes} bytes)"
+        ok_checks.append((str(out_pdf), pdf_bytes))
+    except Exception as e:
+        LOG.exception("PDF smoke check failed: %s", e)
+        sys.exit(3)
+
+    # Trip route PNG
+    maps_dir = ROOT / "data" / "maps"
+    trip_map = maps_dir / f"book_{book.id}_route.png"
+    if not trip_map.exists():
+        LOG.error("Expected trip route image %s not found", trip_map)
+        sys.exit(4)
+    trip_bytes = trip_map.stat().st_size
+    if trip_bytes <= MIN_PNG_BYTES:
+        LOG.error("Trip route PNG too small: %s (%d bytes)", trip_map, trip_bytes)
+        sys.exit(5)
+    ok_checks.append((str(trip_map), trip_bytes))
+
+    # At least one day route PNG
+    day_maps = sorted(maps_dir.glob(f"book_{book.id}_day_*_route.png"))
+    if not day_maps:
+        LOG.error("No day route images found in %s", maps_dir)
+        sys.exit(6)
+    # check first day map size
+    day_bytes = day_maps[0].stat().st_size
+    if day_bytes <= MIN_PNG_BYTES:
+        LOG.error("Day route PNG too small: %s (%d bytes)", day_maps[0], day_bytes)
+        sys.exit(7)
+    ok_checks.append((str(day_maps[0]), day_bytes))
+
+    # Thumbnails (optional)
+    if fitz is not None:
+        try:
+            thumbs_list = sorted(pages_dir.glob("page_*.png"))
+            if len(thumbs_list) == 0:
+                LOG.error("Thumbnails were expected but none were generated in %s", pages_dir)
+                sys.exit(8)
+            # ensure a few thumbnails exist and are non-empty
+            thumb_checks = 0
+            for t in thumbs_list[:3]:
+                if t.stat().st_size > 100:
+                    thumb_checks += 1
+            if thumb_checks == 0:
+                LOG.error("Thumbnails exist but appear empty in %s", pages_dir)
+                sys.exit(9)
+            ok_checks.append(("thumbnails", len(thumbs_list)))
+        except Exception:
+            LOG.exception("Thumbnail smoke check failed")
+            sys.exit(10)
+
+    # Print summary OK
+    print("SMOKE OK:")
+    for p, s in ok_checks:
+        print(f" - {p}: {s}")
+
 
 if __name__ == "__main__":
     main()
