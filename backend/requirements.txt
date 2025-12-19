@@ -34,3 +34,6 @@ pymupdf>=1.22.0
 
 # Future: S3 storage
 # boto3>=1.28.0
+
+# For Testing
+pytest
