@@ -8,7 +8,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Iterable
-from domain.models import Asset, Book, PageLayout, PageType, RenderContext, Theme
+from domain.models import Asset, AssetStatus, AssetType, Book, LayoutRect, PageLayout, PageType, RenderContext, Theme
 from services import map_route_renderer
 from services.map_route_renderer import RouteMarker
 from services.blurb_engine import (
@@ -17,6 +17,7 @@ from services.blurb_engine import (
     build_trip_summary_blurb,
     build_day_intro_tagline,
 )
+from services.cover_postcard import CoverPostcardSpec, generate_postcard_cover
 from services.geocoding import compute_centroid, reverse_geocode_label
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.places_enrichment import enrich_place_candidates_with_names
@@ -359,6 +360,103 @@ def _render_place_highlight_cards(
     return f"<div class=\"trip-place-highlights\">{''.join(cards_html_parts)}</div>"
 
 
+def _to_posix_rel_path(target: Path, base: str) -> str:
+    """Return a POSIX-style relative path from base to target."""
+    base_path = Path(base)
+    try:
+        rel = target.relative_to(base_path)
+    except ValueError:
+        rel = Path(os.path.relpath(target, start=base_path))
+    return rel.as_posix()
+
+
+def _maybe_generate_postcard_cover(
+    book: Book,
+    layouts: List[PageLayout],
+    assets: Dict[str, Asset],
+    context: RenderContext,
+    output_path: str,
+    media_root: str,
+) -> Optional[str]:
+    """
+    Render a postcard-style cover PNG and wire it into the front cover layout.
+
+    Returns the relative asset path (from media_root) if generated.
+    """
+    if not output_path:
+        return None
+
+    front_cover = next((l for l in layouts if getattr(l, "page_type", None) == PageType.FRONT_COVER), None)
+    if front_cover is None:
+        return None
+    payload = getattr(front_cover, "payload", {}) or {}
+    # If we already have a postcard cover recorded, reuse it.
+    existing_cover = payload.get("cover_image_path")
+    if existing_cover:
+        return existing_cover
+
+    title = (payload.get("title") or getattr(book, "title", "") or "TRIP").strip() or "TRIP"
+    bottom_text = payload.get("date_range") or payload.get("subtitle") or payload.get("stats_line") or ""
+    hero_asset_id = payload.get("hero_asset_id")
+
+    background_image = None
+    if hero_asset_id and hero_asset_id in assets:
+        try:
+            candidate_path = Path(media_root) / assets[hero_asset_id].file_path
+            if candidate_path.exists():
+                background_image = candidate_path
+        except Exception:
+            pass
+
+    cover_path = Path(output_path).parent / "assets" / "cover_postcard.png"
+    try:
+        spec = CoverPostcardSpec(
+            title=title,
+            top_text=payload.get("top_text") or "Greetings from",
+            bottom_text=bottom_text or "",
+            background_image=background_image,
+            out_path=cover_path,
+        )
+        generate_postcard_cover(spec)
+    except Exception:
+        logger.exception("[render_pdf] Failed to generate postcard cover; falling back to existing cover assets")
+        return None
+
+    cover_rel_path = _to_posix_rel_path(cover_path, media_root)
+
+    # Register the new asset
+    asset_id = "cover_postcard"
+    suffix = 1
+    while asset_id in assets:
+        asset_id = f"cover_postcard_{suffix}"
+        suffix += 1
+    assets[asset_id] = Asset(
+        id=asset_id,
+        book_id=getattr(book, "id", "") or "",
+        status=AssetStatus.APPROVED,
+        type=AssetType.PHOTO,
+        file_path=cover_rel_path,
+    )
+
+    # Point the front cover layout at the new postcard image, wiping overlays/text.
+    front_cover.elements = [
+        LayoutRect(
+            x_mm=0,
+            y_mm=0,
+            width_mm=context.page_width_mm,
+            height_mm=context.page_height_mm,
+            asset_id=asset_id,
+        )
+    ]
+
+    if isinstance(payload, dict):
+        payload["hero_asset_id"] = asset_id
+        payload["cover_image_path"] = cover_rel_path
+        front_cover.payload = payload
+
+    return cover_rel_path
+
+
 def render_book_to_pdf(
     book: Book,
     layouts: List[PageLayout],
@@ -383,6 +481,16 @@ def render_book_to_pdf(
     """
     # Ensure output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Generate a postcard-style cover image and point the front cover to it when possible
+    _maybe_generate_postcard_cover(
+        book=book,
+        layouts=layouts,
+        assets=assets,
+        context=context,
+        output_path=output_path,
+        media_root=media_root,
+    )
     
     # Generate HTML for the book
     html_content = render_book_to_html(
@@ -416,6 +524,7 @@ def render_book_to_html(
     media_root: str,
     mode: str = "web",
     media_base_url: str | None = None,
+    output_path: Optional[str] = None,
 ) -> str:
     """
     Generate HTML for the entire book.
@@ -425,6 +534,24 @@ def render_book_to_html(
       - "pdf": keep filesystem-relative paths (resolved via base_url) for WeasyPrint
       - "web": use /media/{file_path} so the browser can load assets
     """
+    # Ensure postcard cover exists for previews as well.
+    if mode == "web":
+        inferred_output = output_path or str(
+            Path(media_root)
+            / "books"
+            / (getattr(book, "id", "book") or "book")
+            / "exports"
+            / "book.pdf"
+        )
+        _maybe_generate_postcard_cover(
+            book=book,
+            layouts=layouts,
+            assets=assets,
+            context=context,
+            output_path=inferred_output,
+            media_root=media_root,
+        )
+
     return _generate_book_html(
         book, layouts, assets, context, media_root, mode, media_base_url
     )
