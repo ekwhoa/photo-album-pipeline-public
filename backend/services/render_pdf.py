@@ -17,7 +17,11 @@ from services.blurb_engine import (
     build_trip_summary_blurb,
     build_day_intro_tagline,
 )
-from services.cover_postcard import CoverPostcardSpec, generate_postcard_cover
+from services.cover_postcard import (
+    CoverPostcardSpec,
+    generate_composited_cover,
+    generate_postcard_cover,
+)
 from services.geocoding import compute_centroid, reverse_geocode_label
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.places_enrichment import enrich_place_candidates_with_names
@@ -437,7 +441,29 @@ def _maybe_generate_postcard_cover(
         logger.exception("[render_pdf] Failed to generate postcard cover; falling back to existing cover assets")
         return None
 
-    cover_rel_path = _to_posix_rel_path(cover_path, media_root)
+    cover_style = os.environ.get("PHOTOBOOK_COVER_STYLE", "classic").lower().strip()
+    cover_asset_path = cover_path
+
+    if cover_style == "enhanced":
+        try:
+            texture_path = Path(__file__).resolve().parent.parent / "assets" / "cover" / "postcard_paper_texture.jpg"
+            if texture_path.exists():
+                composite_path = cover_path.with_name("cover_front_composite.png")
+                generate_composited_cover(
+                    postcard_path=cover_path,
+                    out_path=composite_path,
+                    texture_path=texture_path,
+                    rotate_deg=-7.0,
+                    inset_frac=0.09,
+                )
+                cover_asset_path = composite_path
+                payload["cover_style"] = "enhanced"
+            else:
+                logger.warning("[render_pdf] Enhanced cover requested but texture missing at %s", texture_path)
+        except Exception:
+            logger.exception("[render_pdf] Failed to generate enhanced cover composite; using base postcard")
+
+    cover_rel_path = _to_posix_rel_path(cover_asset_path, media_root)
 
     # Register the new asset
     asset_id = "cover_postcard"
@@ -2048,6 +2074,7 @@ def _render_page_html(
 
     if layout.page_type == PageType.FRONT_COVER:
         payload = getattr(layout, "payload", {}) or {}
+        cover_style = (payload.get("cover_style") or "").lower()
         cover_asset_id = payload.get("hero_asset_id") or (layout.elements[0].asset_id if getattr(layout, "elements", None) else None)
         cover_asset = assets.get(cover_asset_id) if cover_asset_id else None
         cover_rel_path = payload.get("cover_image_path")
@@ -2060,6 +2087,25 @@ def _render_page_html(
             else:
                 base = media_base_url.rstrip("/") if media_base_url else "/media"
                 cover_src = f"{base}/{cover_rel_path.lstrip('/')}"
+
+        if cover_src and cover_style == "enhanced":
+            return f"""
+    <div class="page page--cover-postcard" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: #163a6b;
+        page-break-after: always;
+        overflow: hidden;
+    ">
+        <img src="{cover_src}" alt="Cover postcard" style="
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        " />
+    </div>
+            """
 
         if cover_src:
             return f"""
