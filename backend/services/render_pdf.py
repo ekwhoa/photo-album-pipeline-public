@@ -837,8 +837,11 @@ def _render_itinerary_page(
                 if dist:
                     stop_parts.append(dist)
                 metrics = " • ".join(stop_parts)
+                metrics_html = (
+                    f'<span class="itinerary-stop-meta"> • {metrics}</span>' if metrics else ""
+                )
                 rows.append(
-                    f'<li class="itinerary-stop"><span class="itinerary-stop-kind">{kind_label}</span>{f'<span class="itinerary-stop-meta"> • {metrics}</span>' if metrics else ""}</li>'
+                    f'<li class="itinerary-stop"><span class="itinerary-stop-kind">{kind_label}</span>{metrics_html}</li>'
                 )
             if rows:
                 stops_html = f'<ul class="itinerary-stops">{"".join(rows)}</ul>'
