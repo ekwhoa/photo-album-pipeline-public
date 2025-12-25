@@ -78,4 +78,13 @@ backend/**/*.py[cod]
 # Database
 backend/app.db
 
-
+# Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.bmp
+*.tiff
+*.ico
+backend/*.png

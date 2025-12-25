@@ -2002,6 +2002,47 @@ def _render_page_html(
     media_base_url: str | None = None,
 ) -> str:
     """Render a single page to HTML."""
+    if layout.page_type == PageType.BACK_COVER:
+        payload = getattr(layout, "payload", {}) or {}
+        footer_text = payload.get("text", "")
+        photo_count = payload.get("photo_count")
+        footer_lines = []
+        if photo_count:
+            footer_lines.append(f"{photo_count} photos")
+        if footer_text:
+            footer_lines.append(footer_text)
+        footer_html = ""
+        if footer_lines:
+            footer_html = f'''
+            <div style="
+                position: absolute;
+                bottom: 10mm;
+                left: 0;
+                width: 100%;
+                text-align: center;
+                color: rgba(255,255,255,0.85);
+                font-size: 10pt;
+                font-family: {theme.font_family};
+            ">{' • '.join(footer_lines)}</div>
+            '''
+        return f"""
+    <div class="page back-cover-page" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: #163a6b;
+        color: #ffffff;
+        font-family: {theme.font_family};
+        page-break-after: always;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    ">
+        {footer_html}
+    </div>
+        """
+
     if layout.page_type == PageType.FRONT_COVER:
         payload = getattr(layout, "payload", {}) or {}
         cover_asset_id = payload.get("hero_asset_id") or (layout.elements[0].asset_id if getattr(layout, "elements", None) else None)
