@@ -370,6 +370,21 @@ def _to_posix_rel_path(target: Path, base: str) -> str:
     return rel.as_posix()
 
 
+def _resolve_asset_src(
+    asset: Asset,
+    *,
+    mode: str,
+    media_root: str,
+    media_base_url: str | None,
+) -> str:
+    """Resolve an asset path for pdf/web modes."""
+    normalized_path = asset.file_path.replace("\\", "/")
+    if mode == "pdf":
+        return normalized_path
+    base = media_base_url.rstrip("/") if media_base_url else "/media"
+    return f"{base}/{normalized_path}"
+
+
 def _maybe_generate_postcard_cover(
     book: Book,
     layouts: List[PageLayout],
@@ -1987,6 +2002,54 @@ def _render_page_html(
     media_base_url: str | None = None,
 ) -> str:
     """Render a single page to HTML."""
+    if layout.page_type == PageType.FRONT_COVER:
+        payload = getattr(layout, "payload", {}) or {}
+        cover_asset_id = payload.get("hero_asset_id") or (layout.elements[0].asset_id if getattr(layout, "elements", None) else None)
+        cover_asset = assets.get(cover_asset_id) if cover_asset_id else None
+        cover_rel_path = payload.get("cover_image_path")
+        cover_src = ""
+        if cover_asset:
+            cover_src = _resolve_asset_src(cover_asset, mode=mode, media_root=media_root, media_base_url=media_base_url)
+        elif cover_rel_path:
+            if mode == "pdf":
+                cover_src = cover_rel_path
+            else:
+                base = media_base_url.rstrip("/") if media_base_url else "/media"
+                cover_src = f"{base}/{cover_rel_path.lstrip('/')}"
+
+        if cover_src:
+            return f"""
+    <div class="page page--cover-postcard" style="
+        position: relative;
+        width: {width_mm}mm;
+        height: {height_mm}mm;
+        background: #163a6b;
+        page-break-after: always;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    ">
+        <div class="cover-postcard-frame" style="
+            position: relative;
+            width: 90%;
+            height: 90%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        ">
+            <img src="{cover_src}" alt="Cover postcard" style="
+                width: 90%;
+                max-width: 90%;
+                height: auto;
+                max-height: 90%;
+                display: block;
+                box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+            " />
+        </div>
+    </div>
+            """
+
     if layout.page_type == PageType.TITLE_PAGE:
         return _render_title_page(layout, theme, width_mm, height_mm)
     if layout.page_type == PageType.BLANK:

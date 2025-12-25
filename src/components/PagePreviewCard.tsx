@@ -89,7 +89,16 @@ export function PagePreviewCard({ page, assets, bookTitle, onClick, segmentSumma
     >
       <CardContent className="p-0">
         <div className="aspect-[3/4] bg-muted relative overflow-hidden flex items-center justify-center">
-          {(page.page_type === 'photo_spread' && heroSrc) ? (
+          {page.page_type === 'front_cover' && heroSrc ? (
+            <div className="w-full h-full flex items-center justify-center bg-[#163a6b]">
+              <img
+                src={heroSrc}
+                alt="Front cover"
+                className="block max-w-[90%] max-h-[90%]"
+                style={{ objectFit: 'contain' }}
+              />
+            </div>
+          ) : (page.page_type === 'photo_spread' && heroSrc) ? (
             <div className="photo-full-inner w-full h-full flex items-center justify-center p-2">
               <img
                 src={heroSrc}
