@@ -479,6 +479,7 @@ def render_book_to_pdf(
     context: RenderContext,
     output_path: str,
     media_root: str,
+    include_itinerary: bool = False,
 ) -> str:
     """
     Render a book to PDF.
@@ -509,7 +510,7 @@ def render_book_to_pdf(
     
     # Generate HTML for the book
     html_content = render_book_to_html(
-        book, layouts, assets, context, media_root, mode="pdf"
+        book, layouts, assets, context, media_root, mode="pdf", include_itinerary=include_itinerary
     )
     
     # Try to render with WeasyPrint
@@ -540,6 +541,7 @@ def render_book_to_html(
     mode: str = "web",
     media_base_url: str | None = None,
     output_path: Optional[str] = None,
+    include_itinerary: bool = False,
 ) -> str:
     """
     Generate HTML for the entire book.
@@ -568,7 +570,7 @@ def render_book_to_html(
         )
 
     return _generate_book_html(
-        book, layouts, assets, context, media_root, mode, media_base_url
+        book, layouts, assets, context, media_root, mode, media_base_url, include_itinerary=include_itinerary
     )
 
 def _render_photo_grid_from_elements(
@@ -765,6 +767,7 @@ def _generate_book_html(
     media_root: str,
     mode: str = "web",
     media_base_url: str | None = None,
+    include_itinerary: bool = False,
 ) -> str:
     """Generate HTML for the entire book."""
     theme = context.theme
@@ -848,7 +851,7 @@ def _generate_book_html(
         pages_html.append(page_html)
 
     # Optional itinerary page appended after all pages
-    if itinerary_days:
+    if include_itinerary and itinerary_days:
         pages_html.append(
             _render_itinerary_page(
                 itinerary_days,

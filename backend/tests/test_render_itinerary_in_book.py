@@ -72,7 +72,14 @@ def test_itinerary_section_appended(mock_itinerary):
     context = RenderContext(book_size=BookSize.SQUARE_8, theme=Theme())
     layouts = compute_all_layouts(book.get_all_pages(), context, book_id=book.id)
 
-    html = render_book_to_html(book, layouts, {a.id: a for a in assets}, context, media_root=".")
+    html = render_book_to_html(
+        book,
+        layouts,
+        {a.id: a for a in assets},
+        context,
+        media_root=".",
+        include_itinerary=True,
+    )
     assert "trip itinerary" in html.lower()
     assert "Day 1" in html
     assert "Chicago, Illinois" in html
