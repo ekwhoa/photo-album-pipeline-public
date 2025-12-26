@@ -1,10 +1,14 @@
+import glob
 import hashlib
 import json
 import logging
 import os
+import contextlib
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import shutil
 from PIL import Image, ImageOps, ImageFilter, ImageDraw
 
 from domain.models import Asset, AssetStatus, AssetType, LayoutRect, PageLayout, PageType, RenderContext
@@ -22,7 +26,17 @@ class CoverPostcardSpec:
     out_path: Path = Path("cover_postcard.png")
 
 
-def generate_postcard_cover(spec: CoverPostcardSpec) -> Path:
+@contextlib.contextmanager
+def _temporary_cwd(path: Path):
+    prev = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(prev)
+
+
+def generate_postcard_cover(spec: CoverPostcardSpec, debug_dir: Optional[Path] = None) -> Path:
     """Render a postcard-style cover image to the requested path."""
     spec.out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -36,7 +50,52 @@ def generate_postcard_cover(spec: CoverPostcardSpec) -> Path:
         cfg_kwargs["background_image"] = str(spec.background_image)
 
     config = PostcardConfig(**cfg_kwargs)
-    render_postcard(config)
+
+    temp_ctx = None
+    prev_debug_env = os.environ.get("DEBUG")
+    prev_debug_artifacts = os.environ.get("PHOTOBOOK_DEBUG_ARTIFACTS")
+    from vendor.postcard_renderer import engine as postcard_engine
+    prev_engine_debug = getattr(postcard_engine, "DEBUG", False)
+
+    if debug_dir:
+        os.environ["PHOTOBOOK_DEBUG_ARTIFACTS"] = "1"
+        os.environ["DEBUG"] = "1"
+        postcard_engine.DEBUG = True
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        workdir = debug_dir
+    else:
+        temp_ctx = tempfile.TemporaryDirectory()
+        workdir = Path(temp_ctx.name)
+    cwd_ctx = _temporary_cwd(workdir)
+
+    with cwd_ctx:
+        render_postcard(config)
+
+    # Copy debug artifacts if requested
+    if debug_dir:
+        files_in_workdir = sorted([Path(p).name for p in glob.glob(str(workdir / "temp*.png"))])
+        files_in_cwd = sorted([Path(p).name for p in glob.glob("temp*.png")])
+        for f in glob.glob(str(workdir / "temp*.png")):
+            shutil.copy2(f, debug_dir / Path(f).name)
+        logger.info(
+            "[debug-artifacts] after_render cwd=%s workdir=%s found_in_workdir=%s found_in_cwd=%s",
+            Path.cwd(),
+            workdir,
+            files_in_workdir,
+            files_in_cwd,
+        )
+
+    if temp_ctx:
+        temp_ctx.cleanup()
+    if prev_debug_env is None:
+        os.environ.pop("DEBUG", None)
+    else:
+        os.environ["DEBUG"] = prev_debug_env
+    if prev_debug_artifacts is None:
+        os.environ.pop("PHOTOBOOK_DEBUG_ARTIFACTS", None)
+    else:
+        os.environ["PHOTOBOOK_DEBUG_ARTIFACTS"] = prev_debug_artifacts
+    postcard_engine.DEBUG = prev_engine_debug
     return spec.out_path
 
 
@@ -248,8 +307,6 @@ def ensure_cover_asset(
                 background_image = candidate_path
                 payload["cover_background_path"] = _to_posix_rel(candidate_path, Path(media_root))
 
-        assets_dir = Path(output_path).parent / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
         fingerprint_payload = {
             "cover_style": cover_style,
             "title": title,
@@ -264,6 +321,16 @@ def ensure_cover_asset(
         }
         fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()
         fname_stub = fingerprint[:12]
+        assets_dir = Path(output_path).parent / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        debug_enabled = os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1"
+        force_regen = os.getenv("PHOTOBOOK_DEBUG_FORCE_REGEN", "0") == "1"
+        debug_dir = None
+        expected_debug = ["temp_face_mask.png", "temp_warped_face_mask.png", "temp_warped_group.png"]
+        if debug_enabled:
+            debug_dir = assets_dir / "debug" / fname_stub
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[debug-artifacts] enabled=1 debug_dir={debug_dir}")
         postcard_path = assets_dir / f"cover_postcard_{fname_stub}.png"
         composite_path = assets_dir / f"cover_front_composite_{fname_stub}.png"
 
@@ -275,7 +342,7 @@ def ensure_cover_asset(
                 background_image=background_image,
                 out_path=postcard_path,
             )
-            generate_postcard_cover(spec)
+            generate_postcard_cover(spec, debug_dir=debug_dir)
 
         def generate_final(style: str) -> Path:
             if not postcard_path.exists():
@@ -299,7 +366,13 @@ def ensure_cover_asset(
             target_path = composite_path if style == "enhanced" else postcard_path
             sidecar = target_path.with_suffix(target_path.suffix + ".json")
             existing_fp = _load_fingerprint(sidecar)
-            if target_path.exists() and existing_fp == fingerprint_payload:
+            debug_missing = False
+            if debug_dir:
+                debug_missing = not any((debug_dir / name).exists() for name in expected_debug)
+            cache_hit = target_path.exists() and existing_fp == fingerprint_payload
+            if cache_hit and debug_missing:
+                logger.info("[debug-artifacts] cache_hit=1 but debug missing -> regenerating debug artifacts")
+            if cache_hit and not force_regen and not debug_missing:
                 return target_path
             # Always refresh base when fingerprint changes
             generate_base()

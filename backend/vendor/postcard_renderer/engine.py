@@ -7,6 +7,8 @@ import sys
 import sys
 from typing import TYPE_CHECKING
 import numpy as np
+from pathlib import Path
+import tempfile
 from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageFilter, ImageEnhance, ImageOps
 from wand.image import Image as WandImage
 from wand.color import Color as WandColor
@@ -1289,7 +1291,8 @@ def generate_postcard(
     return final_result_down
     
     # Cleanup
-    if not DEBUG:
+    debug_artifacts = os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1"
+    if not DEBUG and not debug_artifacts:
         for path in [
             "temp_warped_group.png",
             "02_after_arc.png",

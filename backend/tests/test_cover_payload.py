@@ -11,7 +11,7 @@ def _make_img(path: Path, color: tuple[int, int, int] = (200, 200, 200)) -> None
 
 
 def test_ensure_cover_asset_enhanced_wires_layout(monkeypatch, tmp_path):
-    def fake_generate_postcard_cover(spec):
+    def fake_generate_postcard_cover(spec, debug_dir=None):
         _make_img(Path(spec.out_path), (50, 150, 200))
 
     def fake_generate_composited_cover(postcard_path, out_path, **_):
@@ -50,7 +50,7 @@ def test_ensure_cover_asset_enhanced_wires_layout(monkeypatch, tmp_path):
 
 
 def test_ensure_cover_asset_fallbacks_to_classic(monkeypatch, tmp_path):
-    def fake_generate_postcard_cover(spec):
+    def fake_generate_postcard_cover(spec, debug_dir=None):
         _make_img(Path(spec.out_path), (120, 120, 120))
 
     def fake_generate_composited_cover(*_, **__):
@@ -103,8 +103,10 @@ def test_generate_composited_cover_smoke(tmp_path):
 
 
 def test_cover_helper_preview_pdf_consistency(monkeypatch, tmp_path):
-    def fake_generate_postcard_cover(spec):
+    def fake_generate_postcard_cover(spec, debug_dir=None):
         _make_img(Path(spec.out_path), (80, 80, 200))
+        if debug_dir:
+            _make_img(debug_dir / "temp_face_mask.png", (1, 2, 3))
 
     def fake_generate_composited_cover(postcard_path, out_path, **_):
         _make_img(Path(out_path), (30, 30, 30))
@@ -128,7 +130,13 @@ def test_cover_helper_preview_pdf_consistency(monkeypatch, tmp_path):
     output_path = tmp_path / "book.pdf"
     media_root = str(tmp_path)
 
+    monkeypatch.setenv("PHOTOBOOK_DEBUG_ARTIFACTS", "1")
     id1 = ensure_cover_asset(book, layouts1, assets1, context, media_root, str(output_path), cover_style_env="enhanced", mode_label="preview")
+    # remove debug to simulate cache hit without debug files
+    debug_dir = Path(media_root) / "assets" / "debug" / id1.split("_")[-1]
+    if debug_dir.exists():
+        for f in debug_dir.glob("*"):
+            f.unlink()
     id2 = ensure_cover_asset(book, layouts2, assets2, context, media_root, str(output_path), cover_style_env="enhanced", mode_label="pdf")
 
     assert id1 == id2
@@ -138,3 +146,4 @@ def test_cover_helper_preview_pdf_consistency(monkeypatch, tmp_path):
     assert full_path.exists()
     assert layouts1[0].payload.get("cover_background_asset_id") == "a1"
     assert layouts2[0].payload.get("cover_background_asset_id") == "a1"
+    assert any(debug_dir.glob("temp*.png"))
