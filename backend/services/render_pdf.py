@@ -17,11 +17,7 @@ from services.blurb_engine import (
     build_trip_summary_blurb,
     build_day_intro_tagline,
 )
-from services.cover_postcard import (
-    CoverPostcardSpec,
-    generate_composited_cover,
-    generate_postcard_cover,
-)
+from services.cover_postcard import ensure_cover_asset
 from services.geocoding import compute_centroid, reverse_geocode_label
 from services.itinerary import build_book_itinerary, build_place_candidates, PlaceCandidate
 from services.places_enrichment import enrich_place_candidates_with_names
@@ -364,16 +360,6 @@ def _render_place_highlight_cards(
     return f"<div class=\"trip-place-highlights\">{''.join(cards_html_parts)}</div>"
 
 
-def _to_posix_rel_path(target: Path, base: str) -> str:
-    """Return a POSIX-style relative path from base to target."""
-    base_path = Path(base)
-    try:
-        rel = target.relative_to(base_path)
-    except ValueError:
-        rel = Path(os.path.relpath(target, start=base_path))
-    return rel.as_posix()
-
-
 def _resolve_asset_src(
     asset: Asset,
     *,
@@ -387,115 +373,6 @@ def _resolve_asset_src(
         return normalized_path
     base = media_base_url.rstrip("/") if media_base_url else "/media"
     return f"{base}/{normalized_path}"
-
-
-def _maybe_generate_postcard_cover(
-    book: Book,
-    layouts: List[PageLayout],
-    assets: Dict[str, Asset],
-    context: RenderContext,
-    output_path: str,
-    media_root: str,
-) -> Optional[str]:
-    """
-    Render a postcard-style cover PNG and wire it into the front cover layout.
-
-    Returns the relative asset path (from media_root) if generated.
-    """
-    if not output_path:
-        return None
-
-    front_cover = next((l for l in layouts if getattr(l, "page_type", None) == PageType.FRONT_COVER), None)
-    if front_cover is None:
-        return None
-    payload = getattr(front_cover, "payload", {}) or {}
-    # If we already have a postcard cover recorded, reuse it.
-    existing_cover = payload.get("cover_image_path")
-    if existing_cover:
-        return existing_cover
-
-    title = (payload.get("title") or getattr(book, "title", "") or "TRIP").strip() or "TRIP"
-    bottom_text = payload.get("date_range") or payload.get("subtitle") or payload.get("stats_line") or ""
-    hero_asset_id = payload.get("hero_asset_id")
-
-    background_image = None
-    if hero_asset_id and hero_asset_id in assets:
-        try:
-            candidate_path = Path(media_root) / assets[hero_asset_id].file_path
-            if candidate_path.exists():
-                background_image = candidate_path
-        except Exception:
-            pass
-
-    cover_path = Path(output_path).parent / "assets" / "cover_postcard.png"
-    try:
-        spec = CoverPostcardSpec(
-            title=title,
-            top_text=payload.get("top_text") or "Greetings from",
-            bottom_text=bottom_text or "",
-            background_image=background_image,
-            out_path=cover_path,
-        )
-        generate_postcard_cover(spec)
-    except Exception:
-        logger.exception("[render_pdf] Failed to generate postcard cover; falling back to existing cover assets")
-        return None
-
-    cover_style = os.environ.get("PHOTOBOOK_COVER_STYLE", "classic").lower().strip()
-    cover_asset_path = cover_path
-
-    if cover_style == "enhanced":
-        try:
-            texture_path = Path(__file__).resolve().parent.parent / "assets" / "cover" / "postcard_paper_texture.jpg"
-            if texture_path.exists():
-                composite_path = cover_path.with_name("cover_front_composite.png")
-                generate_composited_cover(
-                    postcard_path=cover_path,
-                    out_path=composite_path,
-                    texture_path=texture_path,
-                    rotate_deg=-7.0,
-                    inset_frac=0.09,
-                )
-                cover_asset_path = composite_path
-                payload["cover_style"] = "enhanced"
-            else:
-                logger.warning("[render_pdf] Enhanced cover requested but texture missing at %s", texture_path)
-        except Exception:
-            logger.exception("[render_pdf] Failed to generate enhanced cover composite; using base postcard")
-
-    cover_rel_path = _to_posix_rel_path(cover_asset_path, media_root)
-
-    # Register the new asset
-    asset_id = "cover_postcard"
-    suffix = 1
-    while asset_id in assets:
-        asset_id = f"cover_postcard_{suffix}"
-        suffix += 1
-    assets[asset_id] = Asset(
-        id=asset_id,
-        book_id=getattr(book, "id", "") or "",
-        status=AssetStatus.APPROVED,
-        type=AssetType.PHOTO,
-        file_path=cover_rel_path,
-    )
-
-    # Point the front cover layout at the new postcard image, wiping overlays/text.
-    front_cover.elements = [
-        LayoutRect(
-            x_mm=0,
-            y_mm=0,
-            width_mm=context.page_width_mm,
-            height_mm=context.page_height_mm,
-            asset_id=asset_id,
-        )
-    ]
-
-    if isinstance(payload, dict):
-        payload["hero_asset_id"] = asset_id
-        payload["cover_image_path"] = cover_rel_path
-        front_cover.payload = payload
-
-    return cover_rel_path
 
 
 def render_book_to_pdf(
@@ -524,14 +401,22 @@ def render_book_to_pdf(
     # Ensure output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Generate a postcard-style cover image and point the front cover to it when possible
-    _maybe_generate_postcard_cover(
+    logger.info(
+        "[render_pdf] book=%s media_root=%s output_dir=%s cover_style_env=%s",
+        getattr(book, "id", None),
+        media_root,
+        Path(output_path).parent,
+        os.environ.get("PHOTOBOOK_COVER_STYLE"),
+    )
+    # Generate/select cover asset and wire into payload
+    ensure_cover_asset(
         book=book,
         layouts=layouts,
         assets=assets,
         context=context,
-        output_path=output_path,
         media_root=media_root,
+        output_path=output_path,
+        mode_label="pdf",
     )
     
     # Generate HTML for the book
@@ -577,7 +462,15 @@ def render_book_to_html(
       - "pdf": keep filesystem-relative paths (resolved via base_url) for WeasyPrint
       - "web": use /media/{file_path} so the browser can load assets
     """
-    # Ensure postcard cover exists for previews as well.
+    logger.info(
+        "[render_html] book=%s mode=%s media_root=%s output_dir=%s cover_style_env=%s",
+        getattr(book, "id", None),
+        mode,
+        media_root,
+        output_path,
+        os.environ.get("PHOTOBOOK_COVER_STYLE"),
+    )
+    # Ensure cover asset/layout are wired for previews as well.
     if mode == "web":
         inferred_output = output_path or str(
             Path(media_root)
@@ -586,14 +479,15 @@ def render_book_to_html(
             / "exports"
             / "book.pdf"
         )
-        _maybe_generate_postcard_cover(
+        ensure_cover_asset(
             book=book,
             layouts=layouts,
             assets=assets,
             context=context,
-            output_path=inferred_output,
-            media_root=media_root,
-        )
+        media_root=media_root,
+        output_path=inferred_output,
+        mode_label="preview",
+    )
 
     return _generate_book_html(
         book, layouts, assets, context, media_root, mode, media_base_url, include_itinerary=include_itinerary
@@ -2090,6 +1984,7 @@ def _render_page_html(
 
         if cover_src and cover_style == "enhanced":
             return f"""
+    <!-- cover_debug: style={cover_style} hero_asset_id={cover_asset_id} cover_image_path={cover_rel_path} resolved_src={cover_src} assets_dir={Path(media_root) / 'assets'} -->
     <div class="page page--cover-postcard" style="
         position: relative;
         width: {width_mm}mm;
@@ -2109,6 +2004,7 @@ def _render_page_html(
 
         if cover_src:
             return f"""
+    <!-- cover_debug: style={cover_style or 'classic'} hero_asset_id={cover_asset_id} cover_image_path={cover_rel_path} resolved_src={cover_src} assets_dir={Path(media_root) / 'assets'} -->
     <div class="page page--cover-postcard" style="
         position: relative;
         width: {width_mm}mm;

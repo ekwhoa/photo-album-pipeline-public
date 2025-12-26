@@ -3,7 +3,9 @@ Pipeline API routes.
 
 Handles book generation and PDF output.
 """
+import logging
 from datetime import datetime
+from pathlib import Path
 from typing import List
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -24,6 +26,7 @@ router = APIRouter()
 storage = FileStorage()
 books_repo = BooksRepository()
 assets_repo = AssetsRepository()
+logger = logging.getLogger(__name__)
 
 
 class PagePreviewResponse(BaseModel):
@@ -132,6 +135,20 @@ async def generate_book(book_id: str):
             context=context,
             output_path=pdf_absolute_path,
             media_root=str(storage.media_root),
+        )
+
+        # Debug cover asset presence for real renders
+        assets_dir = Path(pdf_absolute_path).parent / "assets"
+        cover_files = {
+            "cover_postcard": assets_dir / "cover_postcard.png",
+            "cover_front_composite": assets_dir / "cover_front_composite.png",
+        }
+        logger.info(
+            "[pipeline.render] media_root=%s assets_dir=%s cover_postcard_exists=%s cover_front_composite_exists=%s",
+            storage.media_root,
+            assets_dir,
+            cover_files["cover_postcard"].exists(),
+            cover_files["cover_front_composite"].exists(),
         )
         
         # Update book metadata
