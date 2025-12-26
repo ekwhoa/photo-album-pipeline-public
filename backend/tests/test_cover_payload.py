@@ -1,5 +1,5 @@
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 from domain.models import Asset, AssetStatus, AssetType, Book, BookSize, LayoutRect, PageLayout, PageType, RenderContext
 from services.cover_postcard import ensure_cover_asset, generate_composited_cover
@@ -8,6 +8,15 @@ from services.cover_postcard import ensure_cover_asset, generate_composited_cove
 def _make_img(path: Path, color: tuple[int, int, int] = (200, 200, 200)) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (400, 400), color).save(path, format="PNG")
+
+
+def _luminance_mean(img: Image.Image) -> float:
+    rgb = img.convert("RGB")
+    pixels = list(rgb.getdata())
+    total = 0.0
+    for r, g, b in pixels:
+        total += 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return total / len(pixels)
 
 
 def test_ensure_cover_asset_enhanced_wires_layout(monkeypatch, tmp_path):
@@ -100,6 +109,55 @@ def test_generate_composited_cover_smoke(tmp_path):
 
     assert composite.exists()
     assert composite.stat().st_size > 1000
+
+
+def test_composite_preserves_shadow(tmp_path):
+    base = tmp_path / "cover_postcard.png"
+    composite = tmp_path / "cover_front_composite.png"
+    texture = tmp_path / "texture.jpg"
+    debug_dir = tmp_path / "debug"
+
+    # Build a postcard with a dark drop shadow on opaque background
+    postcard = Image.new("RGBA", (400, 300), (245, 245, 245, 255))
+    shadow = Image.new("RGBA", postcard.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rectangle((120, 120, 280, 180), fill=(0, 0, 0, 200))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=6))
+    postcard = Image.alpha_composite(postcard, shadow)
+    ImageDraw.Draw(postcard).rectangle((130, 125, 270, 175), fill=(40, 60, 120, 255))
+    postcard.save(base, format="PNG")
+    Image.new("RGB", (1800, 1200), (230, 225, 210)).save(texture, format="JPEG")
+
+    generate_composited_cover(
+        postcard_path=base,
+        out_path=composite,
+        texture_path=texture,
+        rotate_deg=0.0,  # keep geometry simple for comparison
+        inset_frac=0.1,
+        debug_dir=debug_dir,
+    )
+
+    assert (debug_dir / "card_layer_flat.png").exists()
+    flat = Image.open(debug_dir / "card_layer_flat.png")
+
+    # Reconstruct expected postcard window crop (matches generate_composited_cover math with rotate=0)
+    card_w = int(postcard.width * 0.75)
+    card_h = int(card_w * (postcard.height / postcard.width))
+    window_inset = int(card_w * 0.1)
+    window_w = card_w - 2 * window_inset
+    window_h = card_h - 2 * window_inset
+    scale_pc = max(window_w / postcard.width, window_h / postcard.height)
+    scaled = postcard.resize((int(postcard.width * scale_pc), int(postcard.height * scale_pc)), resample=Image.Resampling.LANCZOS)
+    left = max(0, (scaled.width - window_w) // 2)
+    top = max(0, (scaled.height - window_h) // 2)
+    expected_window = scaled.crop((left, top, left + window_w, top + window_h))
+
+    # Locate the window region inside the flat card (rotate_deg=0 so no offset changes)
+    window_region = flat.crop((window_inset, window_inset, window_inset + window_w, window_inset + window_h))
+
+    expected_mean = _luminance_mean(expected_window)
+    observed_mean = _luminance_mean(window_region)
+    # The composite should not brighten the postcard shadow region
+    assert observed_mean <= expected_mean + 1.5
 
 
 def test_cover_helper_preview_pdf_consistency(monkeypatch, tmp_path):

@@ -2,6 +2,7 @@ import glob
 import hashlib
 import json
 import logging
+import math
 import os
 import contextlib
 import tempfile
@@ -34,6 +35,19 @@ def _temporary_cwd(path: Path):
         yield
     finally:
         os.chdir(prev)
+
+
+def _copy_debug_artifact(src_path: Path, debug_dir: Path) -> None:
+    dst_path = (debug_dir / src_path.name)
+    try:
+        if src_path.resolve() == dst_path.resolve():
+            return
+    except Exception:
+        pass
+    try:
+        shutil.copy2(src_path, dst_path)
+    except Exception:
+        logger.warning("[debug-artifacts] failed to copy %s -> %s", src_path, dst_path, exc_info=True)
 
 
 def generate_postcard_cover(spec: CoverPostcardSpec, debug_dir: Optional[Path] = None) -> Path:
@@ -76,7 +90,12 @@ def generate_postcard_cover(spec: CoverPostcardSpec, debug_dir: Optional[Path] =
         files_in_workdir = sorted([Path(p).name for p in glob.glob(str(workdir / "temp*.png"))])
         files_in_cwd = sorted([Path(p).name for p in glob.glob("temp*.png")])
         for f in glob.glob(str(workdir / "temp*.png")):
-            shutil.copy2(f, debug_dir / Path(f).name)
+            src = Path(f)
+            if src.exists():
+                try:
+                    _copy_debug_artifact(src, debug_dir)
+                except Exception:
+                    logger.warning("[debug-artifacts] failed to retain %s", src, exc_info=True)
         logger.info(
             "[debug-artifacts] after_render cwd=%s workdir=%s found_in_workdir=%s found_in_cwd=%s",
             Path.cwd(),
@@ -104,14 +123,22 @@ def generate_composited_cover(
     out_path: Path,
     texture_path: Path,
     rotate_deg: float = -7.0,
-    inset_frac: float = 0.1,
+    inset_frac: float = 0.08,
     shadow_offset: tuple[int, int] = (18, 18),
     shadow_radius: int = 18,
+    debug_dir: Optional[Path] = None,
 ) -> Path:
     """
     Composite the postcard onto a textured card, then tilt the entire stack with shadow.
     """
-    TARGET_FIT_W = 0.78  # rotated bbox max width vs cover width
+    def rotated_size(size: tuple[int, int], deg: float) -> tuple[float, float]:
+        w, h = size
+        rad = math.radians(deg)
+        cos_a = abs(math.cos(rad))
+        sin_a = abs(math.sin(rad))
+        return (w * cos_a + h * sin_a, w * sin_a + h * cos_a)
+
+    TARGET_FIT_W = 0.75  # rotated bbox max width vs cover width
     TARGET_FIT_H = 0.70  # rotated bbox max height vs cover height
     postcard = Image.open(postcard_path).convert("RGBA")
     canvas_w, canvas_h = postcard.size
@@ -169,46 +196,77 @@ def generate_composited_cover(
     card_layer = Image.new("RGBA", card_size, (0, 0, 0, 0))
     card_layer.paste(card_face, (0, 0))
 
-    # Place postcard art in a centered window with uniform inset using cover crop
-    window_inset = int(card_size[0] * 0.04)
+    # Place postcard art scaled with a window inset; rotate once at the end
+    window_inset = int(card_size[0] * inset_frac)
     window_w = max(1, card_size[0] - 2 * window_inset)
     window_h = max(1, card_size[1] - 2 * window_inset)
-    scale = max(window_w / postcard.width, window_h / postcard.height)
-    resized = postcard.resize(
-        (max(1, int(postcard.width * scale)), max(1, int(postcard.height * scale))),
-        resample=Image.Resampling.LANCZOS,
-    )
-    left = max(0, (resized.width - window_w) // 2)
-    top = max(0, (resized.height - window_h) // 2)
-    postcard_cropped = resized.crop((left, top, left + window_w, top + window_h))
+    scale_pc = max(window_w / postcard.width, window_h / postcard.height)
+    def _resize_rgba_premultiplied(img: Image.Image, size: tuple[int, int]) -> Image.Image:
+        if img.size == size:
+            return img.copy()
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        r, g, b, a = img.split()
+        r = Image.composite(r, Image.new("L", img.size, 0), a)
+        g = Image.composite(g, Image.new("L", img.size, 0), a)
+        b = Image.composite(b, Image.new("L", img.size, 0), a)
+        r = r.resize(size, resample=Image.Resampling.LANCZOS)
+        g = g.resize(size, resample=Image.Resampling.LANCZOS)
+        b = b.resize(size, resample=Image.Resampling.LANCZOS)
+        a = a.resize(size, resample=Image.Resampling.LANCZOS)
+        # Un-premultiply
+        a_data = a.load()
+        r_data, g_data, b_data = r.load(), g.load(), b.load()
+        for y in range(size[1]):
+            for x in range(size[0]):
+                alpha = a_data[x, y]
+                if alpha == 0:
+                    r_data[x, y] = 0
+                    g_data[x, y] = 0
+                    b_data[x, y] = 0
+                else:
+                    r_data[x, y] = int(min(255, r_data[x, y] * 255 / alpha))
+                    g_data[x, y] = int(min(255, g_data[x, y] * 255 / alpha))
+                    b_data[x, y] = int(min(255, b_data[x, y] * 255 / alpha))
+        return Image.merge("RGBA", (r, g, b, a))
+
+    postcard_scaled = postcard
+    if scale_pc < 0.999 or scale_pc > 1.001:
+        new_size = (max(1, int(postcard.width * scale_pc)), max(1, int(postcard.height * scale_pc)))
+        postcard_scaled = _resize_rgba_premultiplied(postcard, new_size)
+    left = max(0, (postcard_scaled.width - window_w) // 2)
+    top = max(0, (postcard_scaled.height - window_h) // 2)
+    postcard_cropped = postcard_scaled.crop((left, top, left + window_w, top + window_h))
+    # Make the postcard fully opaque inside the window so we don't re-shade the internal drop shadow
+    postcard_cropped = postcard_cropped.copy()
+    postcard_cropped.putalpha(255)
     px = window_inset
     py = window_inset
-    card_layer.paste(postcard_cropped, (px, py), mask=postcard_cropped)
+    card_layer.alpha_composite(postcard_cropped, dest=(px, py))
 
     # Clean fully transparent pixels to avoid halo during resample
     alpha_mask = card_layer.getchannel("A")
     card_layer = Image.composite(card_layer, Image.new("RGBA", card_layer.size, (0, 0, 0, 0)), alpha_mask)
 
-    # Scale the card so the rotated bbox fits target fractions
-    def rotated_size(size: tuple[int, int], angle: float) -> tuple[int, int]:
-        dummy = Image.new("RGBA", size, (0, 0, 0, 0)).rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
-        return dummy.size
-
+    # Rotate the combined card once; adjust scale to fit after rotation
     rot_w, rot_h = rotated_size(card_layer.size, rotate_deg)
-    scale = min(
+    scale_card = min(
         (canvas_w * TARGET_FIT_W) / rot_w,
         (canvas_h * TARGET_FIT_H) / rot_h,
         1.0,
     )
-    if scale < 0.999:
-        new_size = (max(1, int(card_layer.width * scale)), max(1, int(card_layer.height * scale)))
+    if scale_card < 0.999 or scale_card > 1.001:
+        new_size = (max(1, int(card_layer.width * scale_card)), max(1, int(card_layer.height * scale_card)))
         card_layer = card_layer.resize(new_size, resample=Image.Resampling.LANCZOS)
 
-    # Shadow based on scaled card alpha
-    mask = card_layer.getchannel("A")
+    card_layer_flat = card_layer
+    card_layer_tilted = card_layer_flat.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
+
+    # Shadow based on tilted card alpha
+    mask = card_layer_tilted.getchannel("A")
     soft_mask = mask.filter(ImageFilter.GaussianBlur(radius=1.5))
-    shadow = Image.new("RGBA", card_layer.size, (0, 0, 0, 0))
-    shadow_base = Image.new("RGBA", card_layer.size, (0, 0, 0, 140))
+    shadow = Image.new("RGBA", card_layer_tilted.size, (0, 0, 0, 0))
+    shadow_base = Image.new("RGBA", card_layer_tilted.size, (0, 0, 0, 140))
     shadow.paste(shadow_base, mask=soft_mask)
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=shadow_radius))
     shadow_offset_canvas = Image.new(
@@ -220,9 +278,8 @@ def generate_composited_cover(
     oy = max(shadow_offset[1], 0)
     shadow_offset_canvas.paste(shadow, (ox, oy), mask=shadow)
 
-    # Rotate shadow and card together
-    shadow_rot = shadow_offset_canvas.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
-    card_rot = card_layer.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
+    shadow_rot = shadow_offset_canvas
+    card_rot = card_layer_tilted
 
     # Composite onto base canvas, centered
     final = base.copy()
@@ -232,6 +289,16 @@ def generate_composited_cover(
     cx = (canvas_w - card_rot.width) // 2
     cy = (canvas_h - card_rot.height) // 2
     final.paste(card_rot, (cx, cy), mask=card_rot)
+
+    if debug_dir:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        postcard.save(debug_dir / "postcard_original.png")
+        postcard_scaled.save(debug_dir / "postcard_scaled.png")
+        postcard_cropped.save(debug_dir / "postcard_cropped.png")
+        card_layer_flat.save(debug_dir / "card_layer_flat.png")
+        card_layer_tilted.save(debug_dir / "card_layer_tilted.png")
+        shadow_rot.save(debug_dir / "shadow.png")
+        final.save(debug_dir / "final_composite.png")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     final.convert("RGB").save(out_path, format="PNG")
@@ -299,14 +366,16 @@ def ensure_cover_asset(
             photo_assets.sort(key=lambda a: a.id)
             if photo_assets:
                 background_asset_id = photo_assets[0].id
+        media_root_path = Path(media_root).resolve()
         background_image = None
         if background_asset_id and background_asset_id in assets:
-            candidate_path = Path(media_root) / assets[background_asset_id].file_path
+            candidate_path = media_root_path / assets[background_asset_id].file_path
             payload["cover_background_asset_id"] = background_asset_id
             if candidate_path.exists():
                 background_image = candidate_path
-                payload["cover_background_path"] = _to_posix_rel(candidate_path, Path(media_root))
+                payload["cover_background_path"] = _to_posix_rel(candidate_path, media_root_path)
 
+        inset_frac = 0.1
         fingerprint_payload = {
             "cover_style": cover_style,
             "title": title,
@@ -314,14 +383,16 @@ def ensure_cover_asset(
             "background_asset_id": background_asset_id,
             "background_image": str(background_image) if background_image else None,
             "rotate_deg": -7.0,
-            "window_inset_frac": 0.04,
+            "window_inset_frac": inset_frac,
             "ring_thickness_frac": 0.04,
-            "target_fit_w": 0.78,
+            "target_fit_w": 0.75,
             "target_fit_h": 0.70,
         }
         fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()
         fname_stub = fingerprint[:12]
-        assets_dir = Path(output_path).parent / "assets"
+        abs_output = Path(output_path).resolve()
+        media_root_path = Path(media_root).resolve()
+        assets_dir = (abs_output.parent / "assets").resolve()
         assets_dir.mkdir(parents=True, exist_ok=True)
         debug_enabled = os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1"
         force_regen = os.getenv("PHOTOBOOK_DEBUG_FORCE_REGEN", "0") == "1"
@@ -356,7 +427,8 @@ def ensure_cover_asset(
                     out_path=composite_path,
                     texture_path=texture_path,
                     rotate_deg=-7.0,
-                    inset_frac=0.1,
+                    inset_frac=inset_frac,
+                    debug_dir=debug_dir,
                 )
                 return composite_path
             else:
@@ -387,7 +459,7 @@ def ensure_cover_asset(
             cover_style = "classic"
             cover_path = ensure_generated("classic")
 
-        cover_rel_path = _to_posix_rel(cover_path, Path(media_root))
+        cover_rel_path = _to_posix_rel(cover_path, media_root_path)
         asset_id = cover_path.stem  # include fingerprint for cache-busting
         assets[asset_id] = Asset(
             id=asset_id,
