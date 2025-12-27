@@ -1,5 +1,6 @@
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
+from vendor.postcard_renderer.engine import build_letter_texture
 
 from domain.models import Asset, AssetStatus, AssetType, Book, BookSize, LayoutRect, PageLayout, PageType, RenderContext
 from services.cover_postcard import ensure_cover_asset, generate_composited_cover
@@ -158,6 +159,55 @@ def test_composite_preserves_shadow(tmp_path):
     observed_mean = _luminance_mean(window_region)
     # The composite should not brighten the postcard shadow region
     assert observed_mean <= expected_mean + 1.5
+
+
+def test_per_letter_face_has_no_dark_halo(tmp_path):
+    # Synthetic letter image with solid color and transparent edges
+    letter_img = Image.new("RGBA", (120, 120), (20, 160, 40, 255))
+    letters = [letter_img]
+
+    canvas_size = (400, 200)
+    font = ImageFont.load_default()
+    origin = (40, 40)
+
+    letter_texture = build_letter_texture(
+        text="HI",
+        font=font,
+        origin_xy=origin,
+        letter_images=letters,
+        canvas_size=canvas_size,
+        fallback_mode="cycle",
+    )
+    assert letter_texture is not None
+
+    # Shared text mask (same as scenery)
+    face_mask = Image.new("L", canvas_size, 0)
+    draw_mask = ImageDraw.Draw(face_mask)
+    draw_mask.text(origin, "HI", font=font, fill=255)
+
+    face_layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    face_layer.paste(letter_texture, (0, 0), mask=face_mask)
+
+    mask_data = list(face_mask.getdata())
+    band_idx = [i for i, m in enumerate(mask_data) if 0 < m < 255]
+    interior_idx = [i for i, m in enumerate(mask_data) if m >= 200]
+
+    def _luma(img):
+        return [0.2126 * r + 0.7152 * g + 0.0722 * b for r, g, b, a in img.getdata()]
+
+    letter_luma = _luma(face_layer)
+
+    assert band_idx, "Expected band samples"
+    assert interior_idx, "Expected interior samples"
+
+    # Edge band vs interior within letter
+    interior_mean = sum(letter_luma[i] for i in interior_idx) / len(interior_idx)
+    band_mean = sum(letter_luma[i] for i in band_idx) / len(band_idx)
+    assert band_mean >= interior_mean - 8
+
+    # Edge band should not have near-black pixels
+    near_black = sum(1 for i in band_idx if all(c < 10 for c in face_layer.getdata()[i][:3]))
+    assert near_black / len(band_idx) < 0.01
 
 
 def test_cover_helper_preview_pdf_consistency(monkeypatch, tmp_path):

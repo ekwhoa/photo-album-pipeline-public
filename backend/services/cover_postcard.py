@@ -50,7 +50,11 @@ def _copy_debug_artifact(src_path: Path, debug_dir: Path) -> None:
         logger.warning("[debug-artifacts] failed to copy %s -> %s", src_path, dst_path, exc_info=True)
 
 
-def generate_postcard_cover(spec: CoverPostcardSpec, debug_dir: Optional[Path] = None) -> Path:
+def generate_postcard_cover(
+    spec: CoverPostcardSpec,
+    debug_dir: Optional[Path] = None,
+    letter_images: Optional[list] = None,
+) -> Path:
     """Render a postcard-style cover image to the requested path."""
     spec.out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -83,7 +87,7 @@ def generate_postcard_cover(spec: CoverPostcardSpec, debug_dir: Optional[Path] =
     cwd_ctx = _temporary_cwd(workdir)
 
     with cwd_ctx:
-        render_postcard(config)
+        render_postcard(config, letter_images=letter_images if letter_images else None)
 
     # Copy debug artifacts if requested
     if debug_dir:

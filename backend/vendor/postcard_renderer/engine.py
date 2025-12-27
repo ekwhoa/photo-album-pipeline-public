@@ -240,11 +240,49 @@ def cover_fit(image, target_width, target_height):
     """
     scale = max(target_width / image.width, target_height / image.height)
     new_size = (int(image.width * scale), int(image.height * scale))
-    resized = image.resize(new_size, Image.Resampling.LANCZOS)
+    resized = _resize_rgba_premultiplied(image, new_size)
     
     left = (resized.width - target_width) // 2
     top = (resized.height - target_height) // 2
     return resized.crop((left, top, left + target_width, top + target_height))
+
+
+def _resize_rgba_premultiplied(img: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """
+    Alpha-safe resize to avoid dark halos on semi-transparent edges.
+    Keeps RGB zeroed where alpha is zero to prevent matte bleed.
+    """
+    if img.size == size:
+        return img.copy()
+    if img.mode != "RGBA":
+        return img.resize(size, Image.Resampling.LANCZOS)
+
+    r, g, b, a = img.split()
+    zero = Image.new("L", img.size, 0)
+    r = Image.composite(r, zero, a)
+    g = Image.composite(g, zero, a)
+    b = Image.composite(b, zero, a)
+
+    r = r.resize(size, Image.Resampling.LANCZOS)
+    g = g.resize(size, Image.Resampling.LANCZOS)
+    b = b.resize(size, Image.Resampling.LANCZOS)
+    a = a.resize(size, Image.Resampling.LANCZOS)
+
+    # Un-premultiply
+    r_data, g_data, b_data, a_data = r.load(), g.load(), b.load(), a.load()
+    w, h = size
+    for y in range(h):
+        for x in range(w):
+            alpha = a_data[x, y]
+            if alpha == 0:
+                r_data[x, y] = 0
+                g_data[x, y] = 0
+                b_data[x, y] = 0
+            else:
+                r_data[x, y] = int(min(255, r_data[x, y] * 255 / alpha))
+                g_data[x, y] = int(min(255, g_data[x, y] * 255 / alpha))
+                b_data[x, y] = int(min(255, b_data[x, y] * 255 / alpha))
+    return Image.merge("RGBA", (r, g, b, a))
 
 def create_vignette_mask(size, strength=0.18):
     """
@@ -369,7 +407,8 @@ def build_per_letter_face_layer(text, font, origin_xy, letter_images, canvas_siz
         return None, None
 
     origin_x, origin_y = origin_xy
-    face_layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    # Start with a light fill so RGB is defined anywhere the mask is present; tiles will overlay.
+    face_layer = Image.new("RGBA", canvas_size, (245, 245, 245, 0))
     face_mask = Image.new("L", canvas_size, 0)
     draw_dummy = ImageDraw.Draw(Image.new("L", (1, 1), 0))
 
@@ -406,10 +445,173 @@ def build_per_letter_face_layer(text, font, origin_xy, letter_images, canvas_siz
         px = int(origin_x + prefix + bbox[0])
         py = int(origin_y + bbox[1])
 
-        face_layer.paste(fitted, (px, py), char_mask)
+        letter_tile = fitted.copy()
+        char_mask_dilated = char_mask.filter(ImageFilter.MaxFilter(3))  # 1px-ish dilation to cover antialias edge
+        letter_tile.putalpha(char_mask_dilated)
+        face_layer.alpha_composite(letter_tile, dest=(px, py))
         face_mask.paste(char_mask, (px, py), char_mask)
 
+    if DEBUG:
+        try:
+            face_layer.save("letter_texture_raw.png")
+        except Exception:
+            pass
+
+    # Ensure the assembled face layer shares the exact mask edges used by scenery mode
+    fill_mask = face_mask.filter(ImageFilter.MaxFilter(3))
+    face_layer.putalpha(fill_mask)
+
+    if DEBUG:
+        try:
+            face_layer.save("fill_layer_before_outline.png")
+        except Exception:
+            pass
+
+    # Alpha-bleed to avoid dark seams: propagate neighboring RGB into the edge band while keeping alpha intact.
+    if face_layer.getchannel("A").getextrema()[1] > 0:
+        r, g, b, a = face_layer.split()
+        band = ImageChops.subtract(a.filter(ImageFilter.MaxFilter(3)), a.filter(ImageFilter.MinFilter(3)))
+        # Premultiply
+        r_p = ImageChops.multiply(r, a)
+        g_p = ImageChops.multiply(g, a)
+        b_p = ImageChops.multiply(b, a)
+        r_p_d = r_p.filter(ImageFilter.MaxFilter(3))
+        g_p_d = g_p.filter(ImageFilter.MaxFilter(3))
+        b_p_d = b_p.filter(ImageFilter.MaxFilter(3))
+
+        def _blend_premul(orig: Image.Image, dilated: Image.Image) -> Image.Image:
+            return Image.composite(dilated, orig, band)
+
+        r_p_b = _blend_premul(r_p, r_p_d)
+        g_p_b = _blend_premul(g_p, g_p_d)
+        b_p_b = _blend_premul(b_p, b_p_d)
+
+        # Un-premultiply (avoid divide by zero)
+        a_data = a.load()
+        r_data, g_data, b_data = r_p_b.load(), g_p_b.load(), b_p_b.load()
+        w, h = face_layer.size
+        r_out = Image.new("L", face_layer.size, 0)
+        g_out = Image.new("L", face_layer.size, 0)
+        b_out = Image.new("L", face_layer.size, 0)
+        r_out_d, g_out_d, b_out_d = r_out.load(), g_out.load(), b_out.load()
+        for y in range(h):
+            for x in range(w):
+                alpha = a_data[x, y]
+                if alpha == 0:
+                    r_out_d[x, y] = 0
+                    g_out_d[x, y] = 0
+                    b_out_d[x, y] = 0
+                else:
+                    r_out_d[x, y] = min(255, int(r_data[x, y] * 255 / alpha))
+                    g_out_d[x, y] = min(255, int(g_data[x, y] * 255 / alpha))
+                    b_out_d[x, y] = min(255, int(b_data[x, y] * 255 / alpha))
+
+        face_layer = Image.merge("RGBA", (r_out, g_out, b_out, a))
     return face_layer, face_mask
+
+
+def build_letter_texture(text, font, origin_xy, letter_images, canvas_size, fallback_mode="cycle"):
+    """
+    Build a single RGB texture for the whole word by placing per-letter images into their slots (cover fill).
+    Masking is applied later by the shared text mask so outlines/shadows match scenery mode.
+    """
+    if not letter_images:
+        return None
+    origin_x, origin_y = origin_xy
+    texture = Image.new("RGB", canvas_size, (255, 255, 255))
+    draw_dummy = ImageDraw.Draw(Image.new("L", (1, 1), 0))
+    advances = []
+    total_adv = 0.0
+    for ch in text:
+        adv = max(1.0, font.getlength(ch))
+        advances.append(adv)
+        total_adv += adv
+    if total_adv <= 0:
+        return None
+    imgs = letter_images
+    imgs_len = len(imgs)
+    offset_x = 0
+    remaining_px = canvas_size[0]
+    for idx, adv in enumerate(advances):
+        remaining_letters = len(advances) - idx
+        if idx == len(advances) - 1:
+            slice_w = remaining_px
+        else:
+            slice_w = int(round(adv / total_adv * canvas_size[0]))
+            slice_w = max(1, min(slice_w, remaining_px - (remaining_letters - 1)))
+        slice_h = canvas_size[1]
+
+        if fallback_mode == "random":
+            img = random.choice(imgs)
+        elif fallback_mode == "single":
+            img = imgs[0]
+        else:
+            img = imgs[idx % imgs_len]
+
+        img_rgb = ImageOps.exif_transpose(img).convert("RGB")
+        src_w, src_h = img_rgb.size
+        target_ar = slice_w / float(slice_h)
+        src_ar = src_w / float(src_h)
+        if src_ar > target_ar:
+            new_w = int(src_h * target_ar)
+            left = (src_w - new_w) // 2
+            box = (left, 0, left + new_w, src_h)
+        else:
+            new_h = int(src_w / target_ar)
+            top = (src_h - new_h) // 2
+            box = (0, top, src_w, top + new_h)
+        cropped = img_rgb.crop(box)
+        fitted = cropped.resize((slice_w, slice_h), Image.Resampling.LANCZOS)
+
+        texture.paste(fitted, (offset_x, origin_y))
+        offset_x += slice_w
+        remaining_px = max(0, canvas_size[0] - offset_x)
+    if DEBUG:
+        try:
+            texture.save("letter_word_texture.png")
+        except Exception:
+            pass
+    return texture
+
+
+def build_letter_strip_texture(text, font, origin_xy, letter_images, bbox_size, fallback_mode="cycle"):
+    """
+    Build a continuous strip of letter images sized to the word bounding box.
+    Each letter gets a horizontal slice proportional to its advance; slices fill the bbox with no gaps.
+    """
+    if not letter_images:
+        return None
+    text_w, text_h = bbox_size
+    if text_w <= 0 or text_h <= 0:
+        return None
+    origin_x, origin_y = origin_xy
+    strip = Image.new("RGBA", (text_w, text_h), (0, 0, 0, 0))
+    advances = []
+    total = 0.0
+    for ch in text:
+        adv = max(1.0, font.getlength(ch))
+        advances.append(adv)
+        total += adv
+    if total <= 0:
+        return None
+
+    offset = 0
+    imgs = letter_images
+    imgs_len = len(imgs)
+    remaining_px = text_w
+    for idx, (ch, adv) in enumerate(zip(text, advances)):
+        remaining_letters = len(advances) - idx
+        if idx == len(advances) - 1:
+            slice_w = remaining_px
+        else:
+            slice_w = int(round(adv / total * text_w))
+            slice_w = max(1, min(slice_w, remaining_px - (remaining_letters - 1)))
+        img = imgs[idx % imgs_len] if fallback_mode != "random" else random.choice(imgs)
+        fitted = cover_fit(img.convert("RGBA"), slice_w, text_h)
+        strip.paste(fitted, (offset, 0))
+        offset += slice_w
+        remaining_px = max(0, text_w - offset)
+    return strip
 
 def gradient_alpha_mask(size, top_alpha, bottom_alpha, gamma=1.3):
     """
