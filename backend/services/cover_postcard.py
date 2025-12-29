@@ -281,51 +281,60 @@ def generate_composited_cover(
     alpha_mask = card_layer.getchannel("A")
     card_layer = Image.composite(card_layer, Image.new("RGBA", card_layer.size, (0, 0, 0, 0)), alpha_mask)
 
-    # Rotate the combined card once; adjust scale to fit after rotation
-    rot_w, rot_h = rotated_size(card_layer.size, rotate_deg)
+    card_layer_flat = card_layer
+
+    # Persist full postcard (with border/template) to postcard_path for downstream use.
+    postcard_full = card_layer_flat
+    postcard_full.save(postcard_path)
+
+    # Drop shadow from alpha, padded to avoid clipping; rotate group together
+    shadow_blur = max(8, int(0.018 * min(card_layer_flat.size)))
+    shadow_dx = int(0.010 * card_layer_flat.width)
+    shadow_dy = int(0.022 * card_layer_flat.height)
+    shadow_opacity = 220
+    pad = shadow_blur * 3 + max(abs(shadow_dx), abs(shadow_dy)) + 4
+    group_size = (card_layer_flat.width + pad * 2, card_layer_flat.height + pad * 2)
+
+    card_alpha = card_layer_flat.split()[-1]
+    shadow_base_mask = card_alpha.filter(ImageFilter.MaxFilter(5))
+    shadow_mask = shadow_base_mask.filter(ImageFilter.GaussianBlur(radius=shadow_blur))
+    shadow_alpha = shadow_mask.point(lambda p: min(255, int(p * (shadow_opacity / 255.0))))
+
+    shadow_layer = Image.new("RGBA", group_size, (0, 0, 0, 0))
+    shadow_bitmap = Image.new("RGBA", (card_layer_flat.width, card_layer_flat.height), (0, 0, 0, shadow_opacity))
+    shadow_bitmap.putalpha(shadow_alpha)
+    shadow_layer.paste(shadow_bitmap, (pad + shadow_dx, pad + shadow_dy), shadow_bitmap)
+
+    group = Image.new("RGBA", group_size, (0, 0, 0, 0))
+    group = Image.alpha_composite(group, shadow_layer)
+    card_padded = Image.new("RGBA", group_size, (0, 0, 0, 0))
+    card_padded.paste(card_layer_flat, (pad, pad), card_layer_flat)
+    group = Image.alpha_composite(group, card_padded)
+
+    card_layer_tilted = card_layer_flat.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
+    group_rot = group.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
+    shadow_rot = shadow_layer.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
+    rot_w, rot_h = group_rot.size
     scale_card = min(
         (canvas_w * TARGET_FIT_W) / rot_w,
         (canvas_h * TARGET_FIT_H) / rot_h,
         1.0,
     )
     if scale_card < 0.999 or scale_card > 1.001:
-        new_size = (max(1, int(card_layer.width * scale_card)), max(1, int(card_layer.height * scale_card)))
-        card_layer = card_layer.resize(new_size, resample=Image.Resampling.LANCZOS)
-
-    card_layer_flat = card_layer
-
-    # Persist full postcard (with border/template) to postcard_path for downstream use.
-    postcard_full = card_layer_flat
-    postcard_full.save(postcard_path)
-    card_layer_tilted = card_layer_flat.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
-
-    # Shadow based on tilted card alpha
-    mask = card_layer_tilted.getchannel("A")
-    soft_mask = mask.filter(ImageFilter.GaussianBlur(radius=1.5))
-    shadow = Image.new("RGBA", card_layer_tilted.size, (0, 0, 0, 0))
-    shadow_base = Image.new("RGBA", card_layer_tilted.size, (0, 0, 0, 140))
-    shadow.paste(shadow_base, mask=soft_mask)
-    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=shadow_radius))
-    shadow_offset_canvas = Image.new(
-        "RGBA",
-        (shadow.width + abs(shadow_offset[0]) + 4, shadow.height + abs(shadow_offset[1]) + 4),
-        (0, 0, 0, 0),
-    )
-    ox = max(shadow_offset[0], 0)
-    oy = max(shadow_offset[1], 0)
-    shadow_offset_canvas.paste(shadow, (ox, oy), mask=shadow)
-
-    shadow_rot = shadow_offset_canvas
-    card_rot = card_layer_tilted
+        new_size = (max(1, int(group_rot.width * scale_card)), max(1, int(group_rot.height * scale_card)))
+        group_rot = group_rot.resize(new_size, resample=Image.Resampling.LANCZOS)
+        shadow_rot = shadow_rot.resize(new_size, resample=Image.Resampling.LANCZOS)
 
     # Composite onto base canvas, centered
     final = base.copy()
-    sx = (canvas_w - shadow_rot.width) // 2
-    sy = (canvas_h - shadow_rot.height) // 2
-    final.paste(shadow_rot, (sx, sy), mask=shadow_rot)
-    cx = (canvas_w - card_rot.width) // 2
-    cy = (canvas_h - card_rot.height) // 2
-    final.paste(card_rot, (cx, cy), mask=card_rot)
+    gx = (canvas_w - group_rot.width) // 2
+    gy = (canvas_h - group_rot.height) // 2
+    temp_shadow = Image.new("RGBA", final.size, (0, 0, 0, 0))
+    temp_shadow.paste(shadow_rot, (gx, gy), shadow_rot)
+    final = Image.alpha_composite(final, temp_shadow)
+    temp = Image.new("RGBA", final.size, (0, 0, 0, 0))
+    temp.paste(group_rot, (gx, gy), group_rot)
+    final = Image.alpha_composite(final, temp)
 
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -365,11 +374,22 @@ def generate_composited_cover(
             "paper_crop_applied": False,
             "paper_size": [card_size[0], card_size[1]],
             "postcard_mode_before_save": postcard_full.mode,
+            "group_size": list(group_size),
+            "group_rot_size": [group_rot.width, group_rot.height],
+            "shadow_pad": pad,
+            "shadow_dx": shadow_dx,
+            "shadow_dy": shadow_dy,
+            "scale_card": scale_card,
         }
         (debug_dir / "debug_postcard_crop.json").write_text(json.dumps(crop_meta, indent=2))
         card_layer_flat.save(debug_dir / "card_layer_flat.png")
-        card_layer_tilted.save(debug_dir / "card_layer_tilted.png")
-        shadow_rot.save(debug_dir / "shadow.png")
+        card_layer_flat.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0)).save(debug_dir / "card_layer_tilted.png")
+        shadow_layer.save(debug_dir / "shadow.png")
+        gray_bg = Image.new("RGBA", shadow_layer.size, (128, 128, 128, 255))
+        gray_bg.paste(shadow_layer, (0, 0), shadow_layer)
+        gray_bg.save(debug_dir / "debug_postcard_shadow_only.png")
+        Image.merge("RGBA", (Image.new("L", group_size, 128),) * 3 + (shadow_layer.split()[-1],)).save(debug_dir / "debug_postcard_shadow_mask.png")
+        group.save(debug_dir / "debug_postcard_group.png")
         final.save(debug_dir / "final_composite.png")
         pipeline = {
             "postcard_original": [postcard.width, postcard.height],

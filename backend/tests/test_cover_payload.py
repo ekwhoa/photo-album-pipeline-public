@@ -237,6 +237,70 @@ def test_window_enlarged_margin(tmp_path):
     assert window_h / paper_h > 0.83
 
 
+def test_shadow_present_in_composite(tmp_path):
+    postcard_path = tmp_path / "postcard.png"
+    composite = tmp_path / "cover_front_composite.png"
+    texture = tmp_path / "texture.jpg"
+    debug_dir = tmp_path / "debug"
+
+    Image.new("RGBA", (400, 300), (100, 100, 180, 255)).save(postcard_path, format="PNG")
+    Image.new("RGB", (1800, 1200), (10, 60, 120)).save(texture, format="JPEG")
+
+    generate_composited_cover(
+        postcard_path=postcard_path,
+        out_path=composite,
+        texture_path=texture,
+        rotate_deg=0.0,
+        inset_frac=0.1,
+        shadow_offset=(10, 10),
+        shadow_radius=8,
+        debug_dir=debug_dir,
+    )
+
+    shadow_path = debug_dir / "debug_postcard_shadow_only.png"
+    assert shadow_path.exists()
+    shadow = Image.open(shadow_path).convert("RGBA")
+    assert shadow.getchannel("A").getextrema()[1] > 0
+
+    shadow_img = Image.open(debug_dir / "shadow.png").convert("RGBA")
+    shadow_alpha = shadow_img.getchannel("A")
+    card_flat_img = Image.open(debug_dir / "card_layer_flat.png").convert("RGBA")
+    card_alpha = card_flat_img.getchannel("A")
+
+    ring_alpha = 0
+    for y in range(shadow_img.height):
+        for x in range(shadow_img.width):
+            card_a = card_alpha.getpixel((x, y)) if (x < card_flat_img.width and y < card_flat_img.height) else 0
+            if card_a == 0:
+                ring_alpha = max(ring_alpha, shadow_alpha.getpixel((x, y)))
+    assert ring_alpha > 0
+
+    final = Image.open(composite).convert("RGBA")
+    meta = json.loads((debug_dir / "debug_postcard_crop.json").read_text())
+    pad = meta.get("shadow_pad", 0)
+    rot_w, rot_h = meta.get("group_rot_size", [shadow_img.width, shadow_img.height])
+    place_x = (final.width - rot_w) // 2
+    place_y = (final.height - rot_h) // 2
+
+    max_coord = None
+    max_alpha = 0
+    for y in range(shadow_img.height):
+        for x in range(shadow_img.width):
+            card_a = card_alpha.getpixel((x - pad, y - pad)) if (pad <= x < pad + card_flat_img.width and pad <= y < pad + card_flat_img.height) else 0
+            sh_a = shadow_alpha.getpixel((x, y))
+            if card_a == 0 and sh_a > max_alpha:
+                max_alpha = sh_a
+                max_coord = (x, y)
+    assert max_coord is not None
+    scale_card = meta.get("scale_card", 1.0)
+    fx = place_x + int(round(max_coord[0] * scale_card))
+    fy = place_y + int(round(max_coord[1] * scale_card))
+    assert 0 <= fx < final.width and 0 <= fy < final.height
+    bg_px = final.getpixel((5, 5))
+    shadow_px = final.getpixel((fx, fy))
+    assert sum(shadow_px[:3]) < sum(bg_px[:3])
+
+
 def test_per_letter_face_has_no_dark_halo(tmp_path):
     # Synthetic letter image with solid color and transparent edges
     letter_img = Image.new("RGBA", (120, 120), (20, 160, 40, 255))
