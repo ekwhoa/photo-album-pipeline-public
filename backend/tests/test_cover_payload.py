@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 from vendor.postcard_renderer.engine import build_letter_texture
 
@@ -205,6 +206,35 @@ def test_composite_preserves_postcard_border(tmp_path):
     # Debug artifacts for validation
     assert (debug_dir / "debug_postcard_with_border.png").exists()
     assert (debug_dir / "debug_face_window.png").exists()
+
+
+def test_window_enlarged_margin(tmp_path):
+    postcard_path = tmp_path / "postcard.png"
+    composite = tmp_path / "cover_front_composite.png"
+    texture = tmp_path / "texture.jpg"
+    debug_dir = tmp_path / "debug"
+
+    Image.new("RGBA", (400, 300), (20, 20, 20, 255)).save(postcard_path, format="PNG")
+    Image.new("RGB", (1800, 1200), (230, 225, 210)).save(texture, format="JPEG")
+
+    generate_composited_cover(
+        postcard_path=postcard_path,
+        out_path=composite,
+        texture_path=texture,
+        rotate_deg=0.0,
+        inset_frac=0.1,
+        shadow_offset=(0, 0),
+        shadow_radius=1,
+        debug_dir=debug_dir,
+    )
+
+    meta_path = debug_dir / "debug_postcard_crop.json"
+    assert meta_path.exists()
+    meta = json.loads(meta_path.read_text())
+    window_w, window_h = meta["window_size"]
+    paper_w, paper_h = meta["paper_size"]
+    assert window_w / paper_w > 0.85
+    assert window_h / paper_h > 0.83
 
 
 def test_per_letter_face_has_no_dark_halo(tmp_path):

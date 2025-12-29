@@ -221,11 +221,14 @@ def generate_composited_cover(
     card_layer = Image.new("RGBA", card_size, (0, 0, 0, 0))
     card_layer.paste(card_face, (0, 0))
 
-    # Place postcard art scaled to fit inside the window inset; rotate once at the end
-    window_inset = int(card_size[0] * inset_frac)
-    window_w = max(1, card_size[0] - 2 * window_inset)
-    window_h = max(1, card_size[1] - 2 * window_inset)
-    scale_pc = min(window_w / postcard.width, window_h / postcard.height)
+    # Place postcard art scaled to cover the enlarged inner window; rotate once at the end
+    WINDOW_MARGIN_X_FACTOR = 0.60
+    WINDOW_MARGIN_Y_FACTOR = 0.75
+    window_inset_x = int(card_size[0] * inset_frac * WINDOW_MARGIN_X_FACTOR)
+    window_inset_y = int(card_size[1] * inset_frac * WINDOW_MARGIN_Y_FACTOR)
+    window_w = max(1, card_size[0] - 2 * window_inset_x)
+    window_h = max(1, card_size[1] - 2 * window_inset_y)
+    scale_pc = max(window_w / postcard.width, window_h / postcard.height)
     def _resize_rgba_premultiplied(img: Image.Image, size: tuple[int, int]) -> Image.Image:
         if img.size == size:
             return img.copy()
@@ -261,9 +264,12 @@ def generate_composited_cover(
         postcard_scaled = _resize_rgba_premultiplied(postcard, new_size)
     window_mask_scaled = mask_window.resize(postcard_scaled.size, resample=Image.Resampling.NEAREST)
     postcard_scaled.putalpha(window_mask_scaled)
-    px = window_inset + max(0, (window_w - postcard_scaled.width) // 2)
-    py = window_inset + max(0, (window_h - postcard_scaled.height) // 2)
-    postcard_full = postcard_scaled.copy()
+    left = max(0, (postcard_scaled.width - window_w) // 2)
+    top = max(0, (postcard_scaled.height - window_h) // 2)
+    postcard_cropped = postcard_scaled.crop((left, top, left + window_w, top + window_h))
+    px = window_inset_x
+    py = window_inset_y
+    postcard_full = postcard_cropped.copy()
     card_layer.alpha_composite(postcard_full, dest=(px, py))
 
     postcard_before_alpha = card_layer.copy()
@@ -340,15 +346,25 @@ def generate_composited_cover(
         postcard_after_alpha.save(debug_dir / "debug_postcard_final.png")
         cutout_mask.save(debug_dir / "debug_cutout_mask.png")
         card_face_cutout.save(debug_dir / "debug_postcard_after_cutout.png")
+        overlay = card_face_base.copy()
+        draw_overlay = ImageDraw.Draw(overlay)
+        draw_overlay.rectangle(
+            (window_inset_x, window_inset_y, window_inset_x + window_w, window_inset_y + window_h),
+            outline=(255, 0, 0, 255),
+            width=4,
+        )
+        overlay.save(debug_dir / "debug_window_overlay.png")
         crop_meta = {
             "applied_crop": False,
-            "window_inset": window_inset,
+            "window_inset_x": window_inset_x,
+            "window_inset_y": window_inset_y,
             "window_size": [window_w, window_h],
             "postcard_scaled": [postcard_scaled.width, postcard_scaled.height],
             "placement": [px, py],
             "saved_postcard_path": str(postcard_path),
             "paper_crop_applied": False,
             "paper_size": [card_size[0], card_size[1]],
+            "postcard_mode_before_save": postcard_full.mode,
         }
         (debug_dir / "debug_postcard_crop.json").write_text(json.dumps(crop_meta, indent=2))
         card_layer_flat.save(debug_dir / "card_layer_flat.png")
