@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import io
@@ -5,7 +6,8 @@ import random
 import argparse
 import sys
 import sys
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, List, Sequence, Tuple
 import numpy as np
 from pathlib import Path
 import tempfile
@@ -111,6 +113,22 @@ USE_SOFT_FACE_ALPHA = True
 USE_SOFT_STROKES = False
 USE_BOTTOM_BAND_CLAMP = False
 BOTTOM_BAND_CLAMP_PX = int(18 * RENDER_SCALE)
+
+TITLE_INNER_MARGIN_X_FRAC = 0.05
+TITLE_INNER_MARGIN_Y_FRAC = 0.08
+TITLE_SAFE_WIDTH_FRAC = 0.92
+TITLE_SAFE_HEIGHT_FRAC = 0.38
+TITLE_SAFE_PADDING = int(20 * RENDER_SCALE)
+TITLE_MIN_SCALE = 0.65
+MIN_TITLE_HEIGHT_RATIO_SINGLE_LINE = 0.25
+TITLE_TWO_LINE_IMPROVE_THRESHOLD = 0.10
+TITLE_TWO_LINE_SCALE_IMPROVE = 0.10
+TITLE_LINE_GAP_FRAC = 0.12
+TITLE_MIN_STUB_CHARS = 3
+
+SCRIPT_MAX_WIDTH_FRAC = 0.92
+SCRIPT_MIN_SCALE = 0.72
+SCRIPT_ELLIPSIS = "…"
 
 
 # Pipeline overview (warp happens in Wand on the full text group: extrusion + stroke + face).
@@ -233,6 +251,337 @@ def add_noise_and_texture(image):
     
     # Composite over the image
     return Image.alpha_composite(image, grain_layer)
+
+
+@dataclass
+class TitleLayout:
+    lines: List[str]
+    font: ImageFont.FreeTypeFont
+    font_size: int
+    scale: float
+    requested_scale: float
+    safe_box: Tuple[int, int, int, int]
+    bbox: Tuple[int, int, int, int]
+    origins: List[Tuple[int, int]]
+    line_bboxes: List[Tuple[int, int, int, int]]
+    canvas_size: Tuple[int, int]
+    below_min_scale: bool = False
+    mode: str = "single"
+    height_ratio: float = 0.0
+    height_ratio_single: float = 0.0
+    chosen_split_index: int | None = None
+    candidates_debug: List[dict] | None = None
+    best_candidate: dict | None = None
+
+
+def _compute_title_safe_box(canvas_size: tuple[int, int]) -> tuple[int, int, int, int]:
+    """
+    Defines a safe region for the main title relative to the working canvas.
+    """
+    cw, ch = canvas_size
+    inner_x = int(round(cw * TITLE_INNER_MARGIN_X_FRAC))
+    inner_y = int(round(ch * TITLE_INNER_MARGIN_Y_FRAC))
+    inner_w = cw - inner_x * 2
+    inner_h = ch - inner_y * 2
+    safe_w = int(round(inner_w * TITLE_SAFE_WIDTH_FRAC))
+    safe_h = int(round(inner_h * TITLE_SAFE_HEIGHT_FRAC))
+    safe_x = inner_x + (inner_w - safe_w) // 2
+    safe_y = inner_y + (inner_h - safe_h) // 2
+    return (safe_x, safe_y, safe_x + safe_w, safe_y + safe_h)
+
+
+def _split_title_text(text: str) -> List[str]:
+    """
+    Deterministic split near midpoint, preferring word boundaries.
+    """
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return [text]
+    words = cleaned.split(" ")
+    if len(words) == 1:
+        mid = max(TITLE_MIN_STUB_CHARS, min(len(cleaned) - TITLE_MIN_STUB_CHARS, len(cleaned) // 2))
+        return [cleaned[:mid], cleaned[mid:]]
+
+    total_chars = sum(len(w) for w in words) + (len(words) - 1)
+    target = total_chars / 2.0
+    best_idx = 1
+    best_delta = float("inf")
+    running = 0
+    for i, w in enumerate(words[:-1], start=1):
+        running += len(w)
+        delta = abs(running - target)
+        left_len = running
+        right_len = total_chars - running - 1  # account for at least one space
+        if left_len < TITLE_MIN_STUB_CHARS or right_len < TITLE_MIN_STUB_CHARS:
+            continue
+        if delta < best_delta:
+            best_delta = delta
+            best_idx = i
+    left = " ".join(words[:best_idx]).strip()
+    right = " ".join(words[best_idx:]).strip()
+    if not left or not right:
+        mid = max(TITLE_MIN_STUB_CHARS, min(len(cleaned) - TITLE_MIN_STUB_CHARS, len(cleaned) // 2))
+        return [cleaned[:mid], cleaned[mid:]]
+    return [left, right]
+
+
+def _all_two_line_word_splits(text: str) -> List[Tuple[List[str], int]]:
+    """
+    Enumerate all 2-line splits along word boundaries; returns (lines, split_index).
+    split_index is the boundary after N words (1-based).
+    """
+    cleaned = " ".join(text.split())
+    words = cleaned.split(" ")
+    splits: List[Tuple[List[str], int]] = []
+    if len(words) < 2:
+        return splits
+    word_count = len(words)
+    for i in range(1, len(words)):
+        left_words = words[:i]
+        right_words = words[i:]
+        # Hard orphan rule for 4+ words
+        if word_count >= 4 and (len(left_words) == 1 or len(right_words) == 1):
+            continue
+        left = " ".join(left_words).strip()
+        right = " ".join(right_words).strip()
+        if len(left) < TITLE_MIN_STUB_CHARS or len(right) < TITLE_MIN_STUB_CHARS:
+            continue
+        splits.append(([left, right], i))
+    return splits
+
+
+def _measure_text_lines(
+    lines: Sequence[str],
+    font: ImageFont.FreeTypeFont,
+    line_gap: int,
+    draw: ImageDraw.ImageDraw,
+) -> tuple[int, int, List[Tuple[int, int, int, int]]]:
+    """
+    Returns (block_width, block_height, per-line bboxes) for given lines.
+    """
+    bboxes: List[Tuple[int, int, int, int]] = []
+    widths: List[int] = []
+    heights: List[int] = []
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        bboxes.append(bbox)
+        widths.append(bbox[2] - bbox[0])
+        heights.append(bbox[3] - bbox[1])
+    block_w = max(widths) if widths else 0
+    block_h = sum(heights) + (line_gap * (len(lines) - 1 if len(lines) > 1 else 0))
+    return block_w, block_h, bboxes
+
+
+def layout_title_text(
+    text: str,
+    font_path: str,
+    canvas_size: tuple[int, int] = (TEMP_TEXT_WIDTH, TEMP_TEXT_HEIGHT),
+) -> TitleLayout:
+    """
+    Compute layout (lines, scale, positions) for the title inside its safe box.
+    """
+    safe_box = _compute_title_safe_box(canvas_size)
+    safe_w = max(1, (safe_box[2] - safe_box[0]) - 2 * TITLE_SAFE_PADDING)
+    safe_h = max(1, (safe_box[3] - safe_box[1]) - 2 * TITLE_SAFE_PADDING)
+
+    base_font = fit_font_to_box(text, font_path, canvas_size[0] * 0.85, canvas_size[1] * 0.6)
+    base_size = getattr(base_font, "size", 400)
+    draw = ImageDraw.Draw(Image.new("L", (1, 1), 0))
+
+    def _fit(lines: Sequence[str], mode: str = "single", split_index: int | None = None) -> TitleLayout:
+        font_size = max(1, base_size)
+        font = ImageFont.truetype(font_path, font_size)
+        line_gap = max(4, int(round(font_size * TITLE_LINE_GAP_FRAC)))
+        block_w, block_h, line_bboxes = _measure_text_lines(lines, font, line_gap, draw)
+        block_w = max(1, block_w)
+        block_h = max(1, block_h)
+        requested_scale = min(
+            1.0,
+            safe_w / float(block_w),
+            safe_h / float(block_h),
+        )
+        target_size = max(1, min(font_size, int(round(font_size * min(1.0, requested_scale)))))
+        font = ImageFont.truetype(font_path, target_size)
+        line_gap = max(4, int(round(font.size * TITLE_LINE_GAP_FRAC)))
+        block_w, block_h, line_bboxes = _measure_text_lines(lines, font, line_gap, draw)
+        while (block_w > safe_w or block_h > safe_h) and font.size > 1:
+            font = ImageFont.truetype(font_path, font.size - 1)
+            line_gap = max(3, int(round(font.size * TITLE_LINE_GAP_FRAC)))
+            block_w, block_h, line_bboxes = _measure_text_lines(lines, font, line_gap, draw)
+
+        scale = font.size / float(base_size) if base_size else 1.0
+        safe_w_total = safe_box[2] - safe_box[0]
+        safe_h_total = safe_box[3] - safe_box[1]
+        start_y = safe_box[1] + (safe_h_total - block_h) // 2
+        origins: List[Tuple[int, int]] = []
+        xs: List[int] = []
+        ys: List[int] = []
+        cursor_y = start_y
+        for bbox in line_bboxes:
+            lw = bbox[2] - bbox[0]
+            lh = bbox[3] - bbox[1]
+            origin_x = safe_box[0] + (safe_w_total - lw) // 2 - bbox[0]
+            origin_y = cursor_y - bbox[1]
+            origins.append((origin_x, origin_y))
+            xs.extend([origin_x + bbox[0], origin_x + bbox[2]])
+            ys.extend([origin_y + bbox[1], origin_y + bbox[3]])
+            cursor_y += lh + line_gap
+        combined_bbox = (
+            min(xs) if xs else safe_box[0],
+            min(ys) if ys else safe_box[1],
+            max(xs) if xs else safe_box[2],
+            max(ys) if ys else safe_box[3],
+        )
+        height_ratio = (combined_bbox[3] - combined_bbox[1]) / float(safe_box[3] - safe_box[1])
+        return TitleLayout(
+            lines=list(lines),
+            font=font,
+            font_size=font.size,
+            scale=scale,
+            requested_scale=requested_scale,
+            safe_box=safe_box,
+            bbox=combined_bbox,
+            origins=origins,
+            line_bboxes=line_bboxes,
+            canvas_size=canvas_size,
+            below_min_scale=scale < TITLE_MIN_SCALE,
+            mode=mode,
+            height_ratio=height_ratio,
+            chosen_split_index=split_index,
+        )
+
+    single_layout = _fit([text], mode="single", split_index=None)
+    single_ratio = single_layout.height_ratio
+
+    def _evaluate_two_line_candidates():
+        candidates = []
+        words = " ".join(text.split()).split(" ")
+        if len(words) < 2:
+            return None, []
+
+        line_gap_base = max(4, int(round(base_size * TITLE_LINE_GAP_FRAC)))
+        for lines, idx in _all_two_line_word_splits(text):
+            bbox1 = draw.textbbox((0, 0), lines[0], font=base_font)
+            bbox2 = draw.textbbox((0, 0), lines[1], font=base_font)
+            w1, h1 = bbox1[2] - bbox1[0], bbox1[3] - bbox1[1]
+            w2, h2 = bbox2[2] - bbox2[0], bbox2[3] - bbox2[1]
+            block_h = h1 + h2 + line_gap_base
+            if w1 <= 0 or w2 <= 0 or block_h <= 0:
+                continue
+            scale_w1 = safe_w / float(w1)
+            scale_w2 = safe_w / float(w2)
+            scale_h = safe_h / float(block_h)
+            candidate_scale = min(scale_w1, scale_w2, scale_h)
+            width_ratio = max(w1, w2) / float(min(w1, w2))
+            char_ratio = max(len(lines[0]), len(lines[1])) / float(min(len(lines[0]), len(lines[1])))
+            candidates.append({
+                "lines": lines,
+                "split_index": idx,
+                "scale": candidate_scale,
+                "width_ratio": width_ratio,
+                "char_ratio": char_ratio,
+                "word_counts": [len(lines[0].split()), len(lines[1].split())],
+            })
+
+        if not candidates:
+            return None, []
+
+        best = None
+        for cand in candidates:
+            if best is None:
+                best = cand
+                continue
+            if cand["scale"] > best["scale"] * (1 + 1e-6):
+                best = cand
+                continue
+            # Within 1% scale, choose more balanced widths, then chars
+            if abs(cand["scale"] - best["scale"]) <= best["scale"] * 0.01:
+                if cand["width_ratio"] < best["width_ratio"] - 1e-6:
+                    best = cand
+                    continue
+                if abs(cand["width_ratio"] - best["width_ratio"]) <= 1e-6 and cand["char_ratio"] < best["char_ratio"] - 1e-6:
+                    best = cand
+
+        # Special preference for 3-word cases: prefer 1/2 unless 2/1 is notably larger
+        if len(words) == 3 and best:
+            if best["word_counts"][1] == 1 and best["split_index"] == 2:
+                alt = next((c for c in candidates if c["split_index"] == 1), None)
+                if alt and alt["scale"] >= best["scale"] * 0.95:
+                    best = alt
+
+        return best, candidates
+
+    best_candidate, candidates_debug = _evaluate_two_line_candidates()
+
+    # If single line is acceptable height/scale, keep it unless two-line meaningfully improves.
+    should_use_two = False
+    if best_candidate:
+        if single_layout.requested_scale < TITLE_MIN_SCALE or single_layout.scale < TITLE_MIN_SCALE:
+            should_use_two = True
+        elif best_candidate["scale"] >= single_layout.scale * (1 + TITLE_TWO_LINE_SCALE_IMPROVE):
+            should_use_two = True
+
+    if should_use_two and best_candidate:
+        layout = _fit(best_candidate["lines"], mode="two_line", split_index=best_candidate["split_index"])
+        layout.height_ratio_single = single_ratio
+        layout.candidates_debug = candidates_debug
+        layout.best_candidate = best_candidate
+        return layout
+
+    single_layout.height_ratio_single = single_ratio
+    single_layout.candidates_debug = candidates_debug
+    single_layout.best_candidate = best_candidate
+    return single_layout
+
+
+def render_title_mask(layout: TitleLayout) -> Image.Image:
+    """
+    Draws the title lines into a single-channel mask using the provided layout.
+    """
+    mask = Image.new("L", layout.canvas_size, 0)
+    draw = ImageDraw.Draw(mask)
+    for line, origin in zip(layout.lines, layout.origins):
+        draw.text(origin, line, font=layout.font, fill=255)
+    return mask
+
+
+def dump_title_layout_debug(layout: TitleLayout, text_mask: Image.Image) -> None:
+    """
+    Saves debug metadata/overlay when PHOTOBOOK_DEBUG_ARTIFACTS is enabled.
+    """
+    debug_artifacts = os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1"
+    if not (DEBUG or debug_artifacts):
+        return
+    try:
+        overlay = Image.new("RGBA", layout.canvas_size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        outline_w = max(2, int(4 * RENDER_SCALE))
+        draw.rectangle(layout.safe_box, outline=(40, 190, 255, 180), width=outline_w)
+        draw.rectangle(layout.bbox, outline=(255, 80, 60, 200), width=outline_w)
+        base = Image.merge("RGBA", (text_mask, text_mask, text_mask, text_mask))
+        debug_img = Image.alpha_composite(base, overlay)
+        debug_img.save("debug_title_layout.png")
+        meta = {
+            "lines": layout.lines,
+            "scale": layout.scale,
+            "requested_scale": layout.requested_scale,
+            "font_size": layout.font_size,
+            "safe_box": layout.safe_box,
+            "bbox": layout.bbox,
+            "below_min_scale": layout.below_min_scale,
+            "mode": layout.mode,
+            "height_ratio_single": layout.height_ratio_single,
+            "height_ratio_chosen": layout.height_ratio,
+            "chosen_split_index": layout.chosen_split_index,
+            "candidates_evaluated": len(layout.candidates_debug or []),
+            "best_candidate": layout.best_candidate,
+        }
+        if layout.candidates_debug:
+            meta["candidates_sample"] = layout.candidates_debug[:4]
+        with open("debug_title_layout.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+    except Exception:
+        pass
 
 def cover_fit(image, target_width, target_height):
     """
@@ -510,6 +859,41 @@ def build_per_letter_face_layer(text, font, origin_xy, letter_images, canvas_siz
     return face_layer, face_mask
 
 
+def build_per_letter_face_layer_multiline(
+    lines: Sequence[str],
+    font,
+    origins: Sequence[Tuple[int, int]],
+    letter_images,
+    canvas_size,
+    fallback_mode="cycle",
+):
+    """
+    Compose per-letter face layers for multiple lines using shared mask/texture handling.
+    """
+    if not letter_images:
+        return None, None
+    if not lines:
+        return None, None
+    face_layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    face_mask = Image.new("L", canvas_size, 0)
+    for line, origin in zip(lines, origins):
+        layer, mask = build_per_letter_face_layer(
+            line,
+            font,
+            origin,
+            letter_images,
+            canvas_size,
+            fallback_mode,
+        )
+        if layer is None or mask is None:
+            continue
+        face_layer = Image.alpha_composite(face_layer, layer)
+        face_mask = ImageChops.lighter(face_mask, mask)
+    if face_mask.getbbox() is None:
+        return None, None
+    return face_layer, face_mask
+
+
 def build_letter_texture(text, font, origin_xy, letter_images, canvas_size, fallback_mode="cycle"):
     """
     Build a single RGB texture for the whole word by placing per-letter images into their slots (cover fill).
@@ -736,14 +1120,49 @@ def load_script_font(size, font_path):
         print(f"Warning: Script font '{font_path}' not found. Using default.")
         return ImageFont.load_default()
 
-def render_script_label(text, font_size, angle, color, stroke_color, stroke_width, shadow, script_font_path):
+def _fit_script_text(text: str, base_size: int, max_width: int, stroke_width: int, font_path: str):
+    """
+    Shrinks script text to fit max_width; truncates with ellipsis if needed.
+    """
+    draw = ImageDraw.Draw(Image.new("L", (1, 1), 0))
+    min_size = max(1, int(round(base_size * SCRIPT_MIN_SCALE)))
+    size = base_size
+    chosen_text = text
+    while size >= min_size:
+        font = load_script_font(size, font_path)
+        bbox = draw.textbbox((0, 0), chosen_text, font=font, stroke_width=stroke_width)
+        if (bbox[2] - bbox[0]) <= max_width:
+            return chosen_text, font, size, False
+        size -= 1
+    size = min_size
+    font = load_script_font(size, font_path)
+    truncated = text
+    while len(truncated) > 1:
+        candidate = truncated[:-1].rstrip()
+        if not candidate:
+            break
+        candidate_text = candidate if candidate.endswith(SCRIPT_ELLIPSIS) else candidate + SCRIPT_ELLIPSIS
+        bbox = draw.textbbox((0, 0), candidate_text, font=font, stroke_width=stroke_width)
+        if (bbox[2] - bbox[0]) <= max_width:
+            truncated = candidate_text
+            break
+        truncated = candidate
+    if not truncated:
+        truncated = text[:1]
+    return truncated, font, size, True
+
+
+def render_script_label(text, font_size, angle, color, stroke_color, stroke_width, shadow, script_font_path, max_width=None):
     """
     Renders a script label with a subtle duplicate/back layer and a front layer, rotated once.
     """
+    target_text = text
     font = load_script_font(font_size, script_font_path)
+    if max_width:
+        target_text, font, font_size, _ = _fit_script_text(text, font_size, max_width, stroke_width, script_font_path)
     dummy = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
-    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+    bbox = draw.textbbox((0, 0), target_text, font=font, stroke_width=stroke_width)
     w = bbox[2] - bbox[0]
     h = bbox[3] - bbox[1]
     back_offset = max(1, int(4 * RENDER_SCALE))
@@ -759,7 +1178,7 @@ def render_script_label(text, font_size, angle, color, stroke_color, stroke_widt
     # Back/duplicate layer
     draw_img.text(
         (pad + back_offset, pad + back_offset),
-        text,
+        target_text,
         font=font,
         fill=back_color,
         stroke_width=stroke_width + SCRIPT_BACK_STROKE_EXTRA,
@@ -769,7 +1188,7 @@ def render_script_label(text, font_size, angle, color, stroke_color, stroke_widt
     # Front layer
     draw_img.text(
         (pad, pad),
-        text,
+        target_text,
         font=font,
         fill=front_color,
         stroke_width=max(1, stroke_width - 1),
@@ -795,12 +1214,18 @@ def render_script_label(text, font_size, angle, color, stroke_color, stroke_widt
 
     return out
 
-def build_script_layer(canvas_size, placement, script_top_text, script_bottom_text, script_font_path):
+def build_script_layer(canvas_size, placement, script_top_text, script_bottom_text, script_font_path, title_bbox=None):
     """
     Renders top/bottom script labels relative to warped text placement.
     """
     layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
     place_x, place_y, wx, wy = placement
+    canvas_w, canvas_h = canvas_size
+
+    inner_x = int(round(canvas_w * TITLE_INNER_MARGIN_X_FRAC))
+    inner_y = int(round(canvas_h * TITLE_INNER_MARGIN_Y_FRAC))
+    inner_w = canvas_w - inner_x * 2
+    script_max_width = int(inner_w * SCRIPT_MAX_WIDTH_FRAC)
 
     top_size = int(FINAL_WIDTH * 0.065)
     bottom_size = int(FINAL_WIDTH * 0.055)
@@ -817,6 +1242,7 @@ def build_script_layer(canvas_size, placement, script_top_text, script_bottom_te
         max(1, SCRIPT_STROKE_WIDTH - 1),
         SCRIPT_SHADOW,
         script_font_path,
+        max_width=script_max_width,
     )
     bottom_img = render_script_label(
         script_bottom_text,
@@ -827,6 +1253,7 @@ def build_script_layer(canvas_size, placement, script_top_text, script_bottom_te
         max(1, SCRIPT_STROKE_WIDTH - 1),
         SCRIPT_SHADOW,
         script_font_path,
+        max_width=script_max_width,
     )
 
     # Positions (top anchored relative to block, pulled closer)
@@ -841,12 +1268,24 @@ def build_script_layer(canvas_size, placement, script_top_text, script_bottom_te
 
     def clamp(pos, img):
         x, y = pos
-        x = max(0, min(x, canvas_size[0] - img.width))
-        y = max(0, min(y, canvas_size[1] - img.height))
+        x = max(inner_x, min(x, canvas_size[0] - img.width - inner_x))
+        y = max(inner_y, min(y, canvas_size[1] - img.height - inner_y))
         return x, y
 
     top_pos = clamp(top_pos, top_img)
-    bottom_pos = clamp(bottom_pos, bottom_img)
+    if title_bbox:
+        allowed_bottom = title_bbox[1] - SCRIPT_SAFE_PAD
+        if allowed_bottom > 0 and top_pos[1] + top_img.height > allowed_bottom:
+            top_pos = (
+                top_pos[0],
+                max(inner_y, allowed_bottom - top_img.height),
+            )
+    bottom_min_y = (title_bbox[3] + SCRIPT_SAFE_PAD) if title_bbox else bottom_pos[1]
+    bottom_max_y = canvas_size[1] - inner_y - bottom_img.height
+    bottom_pos = (
+        max(inner_x, min(bottom_pos[0], canvas_size[0] - bottom_img.width - inner_x)),
+        min(bottom_max_y, max(bottom_pos[1], bottom_min_y, inner_y)),
+    )
 
     layer.paste(top_img, top_pos, top_img)
     layer.paste(bottom_img, bottom_pos, bottom_img)
@@ -1187,36 +1626,28 @@ def generate_postcard(
     output_filename=OUTPUT_FILENAME,
 ):
     print("1. Generating Text Component...")
-    
-    # Setup Text Asset Canvas (Transparent)
-    txt_canvas = Image.new("RGBA", (TEMP_TEXT_WIDTH, TEMP_TEXT_HEIGHT), (0,0,0,0))
-    
-    # Font Loading
-    font = fit_font_to_box(text, impact_font_path, TEMP_TEXT_WIDTH * 0.85, TEMP_TEXT_HEIGHT * 0.6)
-    
-    # Get Metrics
-    draw_temp = ImageDraw.Draw(txt_canvas)
-    bbox = draw_temp.textbbox((0, 0), text, font=font)
-    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    
-    # Center Coordinates
-    x = (TEMP_TEXT_WIDTH - text_w) // 2
-    y = (TEMP_TEXT_HEIGHT - text_h) // 2
 
-    # Prepare face mask once
-    text_mask = Image.new("L", (TEMP_TEXT_WIDTH, TEMP_TEXT_HEIGHT), 0)
-    draw_tm = ImageDraw.Draw(text_mask)
-    draw_tm.text((x, y), text, font=font, fill=255)
+    layout = layout_title_text(text, impact_font_path, (TEMP_TEXT_WIDTH, TEMP_TEXT_HEIGHT))
+    text_mask = render_title_mask(layout)
+    dump_title_layout_debug(layout, text_mask)
+    print(
+        f"[layout] lines={layout.lines} scale={layout.scale:.3f} "
+        f"bbox={layout.bbox} safe_box={layout.safe_box}"
+    )
+    text_bbox = layout.bbox
+    text_w = text_bbox[2] - text_bbox[0]
+    text_h = text_bbox[3] - text_bbox[1]
+    x, y = text_bbox[0], text_bbox[1]
 
     # --- A. The Main Face (Scenery Fill or Per-letter fill) ---
     use_letter_images = letter_images is not None and len(letter_images) > 0
     fallback_mode = letter_fallback or LETTER_IMAGE_FALLBACK
 
     if use_letter_images:
-        face_layer, face_mask_custom = build_per_letter_face_layer(
-            text,
-            font,
-            (x, y),
+        face_layer, face_mask_custom = build_per_letter_face_layer_multiline(
+            layout.lines,
+            layout.font,
+            layout.origins,
             letter_images,
             (TEMP_TEXT_WIDTH, TEMP_TEXT_HEIGHT),
             fallback_mode,
@@ -1457,12 +1888,22 @@ def generate_postcard(
     
     final_bg = build_background_canvas(FINAL_WIDTH, FINAL_HEIGHT, background_image)
     warped_text = Image.open("temp_warped_group.png").convert("RGBA")
+    warped_alpha = warped_text.split()[-1]
     
     # Center on Final Canvas
     wx, wy = warped_text.size
     place_x = (FINAL_WIDTH - wx) // 2
     place_y = (FINAL_HEIGHT - wy) // 2
     placement = (place_x, place_y, wx, wy)
+    warped_bbox = warped_alpha.getbbox()
+    placed_bbox = None
+    if warped_bbox:
+        placed_bbox = (
+            place_x + warped_bbox[0],
+            place_y + warped_bbox[1],
+            place_x + warped_bbox[2],
+            place_y + warped_bbox[3],
+        )
 
     # Script layer (under block text)
     script_layer = build_script_layer(
@@ -1471,6 +1912,7 @@ def generate_postcard(
         script_top_text,
         script_bottom_text,
         script_font_path,
+        title_bbox=placed_bbox,
     )
     if DEBUG:
         script_layer.save("script_layer.png")
