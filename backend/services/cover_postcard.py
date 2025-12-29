@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import shutil
-from PIL import Image, ImageOps, ImageFilter, ImageDraw
+from PIL import Image, ImageOps, ImageFilter, ImageDraw, ImageChops
 
 from domain.models import Asset, AssetStatus, AssetType, LayoutRect, PageLayout, PageType, RenderContext
 from vendor.postcard_renderer.renderer import PostcardConfig, render_postcard
@@ -135,6 +135,53 @@ def generate_composited_cover(
     """
     Composite the postcard onto a textured card, then tilt the entire stack with shadow.
     """
+    def _magic_wand_cutout(img: Image.Image, tolerance_v: float = 0.90, tolerance_s: float = 0.12) -> tuple[Image.Image, Image.Image]:
+        """
+        Flood-fill from corners to remove connected near-white background without cropping.
+        Returns (rgba_with_cutout, cutout_mask_white_removed).
+        """
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        w, h = img.size
+        pix = img.load()
+        visited = [[False] * h for _ in range(w)]
+        from collections import deque
+        q = deque()
+        for p in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+            q.append(p)
+        mask = Image.new("L", (w, h), 0)
+        mask_data = mask.load()
+
+        def _within_tol(px):
+            r, g, b, a = px
+            if a < 10:
+                return True
+            mx = max(r, g, b) / 255.0
+            mn = min(r, g, b) / 255.0
+            v = mx
+            s = 0 if mx == 0 else (mx - mn) / mx
+            return v >= tolerance_v and s <= tolerance_s
+
+        while q:
+            x, y = q.popleft()
+            if x < 0 or y < 0 or x >= w or y >= h or visited[x][y]:
+                continue
+            visited[x][y] = True
+            if not _within_tol(pix[x, y]):
+                continue
+            mask_data[x, y] = 255
+            q.append((x + 1, y))
+            q.append((x - 1, y))
+            q.append((x, y + 1))
+            q.append((x, y - 1))
+
+        mask = mask.filter(ImageFilter.MaxFilter(3))
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=1))
+        rgba = img.copy()
+        a = rgba.split()[-1]
+        a = ImageChops.subtract(a, mask)
+        rgba.putalpha(a)
+        return rgba, mask
     def rotated_size(size: tuple[int, int], deg: float) -> tuple[float, float]:
         w, h = size
         rad = math.radians(deg)
@@ -158,53 +205,27 @@ def generate_composited_cover(
         card_target_w = int(card_target_h * (postcard.width / postcard.height))
     card_size = (max(1, card_target_w), max(1, card_target_h))
 
-    # Texture as card face, cropped inward to avoid bright edges before fitting
-    texture = Image.open(texture_path).convert("RGB")
-    TEX_CROP_LEFT = 0.02
-    TEX_CROP_RIGHT = 0.02
-    TEX_CROP_TOP = 0.06
-    TEX_CROP_BOTTOM = 0.02
-    tw, th = texture.size
-    crop_box = (
-        int(round(tw * TEX_CROP_LEFT)),
-        int(round(th * TEX_CROP_TOP)),
-        int(round(tw * (1 - TEX_CROP_RIGHT))),
-        int(round(th * (1 - TEX_CROP_BOTTOM))),
-    )
-    texture_cropped = texture.crop(crop_box)
-    card_face = ImageOps.fit(texture_cropped, card_size, method=Image.Resampling.LANCZOS).convert("RGBA")
+    # Texture as card face (keep full texture; apply rounded mask)
+    texture_source = Image.open(texture_path).convert("RGB")
+    card_face_base = texture_source.resize(card_size, resample=Image.Resampling.LANCZOS).convert("RGBA")
+    card_face = card_face_base.copy()
+    card_face_cutout, cutout_mask = _magic_wand_cutout(card_face, tolerance_v=0.90, tolerance_s=0.12)
 
-    # Key out near-white artifacts only in the outer ring to keep the border uniform
-    RING_THICKNESS_FRAC = 0.04
-    ring_thickness = max(1, int(card_size[0] * RING_THICKNESS_FRAC))
-    ring_mask = Image.new("L", card_size, 255)
-    ImageDraw.Draw(ring_mask).rectangle(
-        (ring_thickness, ring_thickness, card_size[0] - ring_thickness, card_size[1] - ring_thickness),
-        fill=0,
-    )
-    ring_data = ring_mask.getdata()
-    data = list(card_face.getdata())
-    def _is_near_pure_white(r: int, g: int, b: int) -> bool:
-        mn = min(r, g, b)
-        mx = max(r, g, b)
-        return mn >= 248 and (mx - mn) <= 6
-    new_data = []
-    for (r, g, b, a), m in zip(data, ring_data):
-        if m == 0:
-            new_data.append((r, g, b, a))
-            continue
-        if _is_near_pure_white(r, g, b):
-            a = 0
-        new_data.append((r, g, b, a))
-    card_face.putdata(new_data)
+    # Masks
+    mask_window = Image.new("L", card_size, 0)
+    ImageDraw.Draw(mask_window).rectangle((0, 0, card_size[0] - 1, card_size[1] - 1), fill=255)
+
+    # Card mask remains fully opaque/rectangular (no rounded alpha)
+    mask_card = Image.new("L", card_size, 255)
+    card_face = card_face_cutout.copy()
     card_layer = Image.new("RGBA", card_size, (0, 0, 0, 0))
     card_layer.paste(card_face, (0, 0))
 
-    # Place postcard art scaled with a window inset; rotate once at the end
+    # Place postcard art scaled to fit inside the window inset; rotate once at the end
     window_inset = int(card_size[0] * inset_frac)
     window_w = max(1, card_size[0] - 2 * window_inset)
     window_h = max(1, card_size[1] - 2 * window_inset)
-    scale_pc = max(window_w / postcard.width, window_h / postcard.height)
+    scale_pc = min(window_w / postcard.width, window_h / postcard.height)
     def _resize_rgba_premultiplied(img: Image.Image, size: tuple[int, int]) -> Image.Image:
         if img.size == size:
             return img.copy()
@@ -238,15 +259,17 @@ def generate_composited_cover(
     if scale_pc < 0.999 or scale_pc > 1.001:
         new_size = (max(1, int(postcard.width * scale_pc)), max(1, int(postcard.height * scale_pc)))
         postcard_scaled = _resize_rgba_premultiplied(postcard, new_size)
-    left = max(0, (postcard_scaled.width - window_w) // 2)
-    top = max(0, (postcard_scaled.height - window_h) // 2)
-    postcard_cropped = postcard_scaled.crop((left, top, left + window_w, top + window_h))
-    # Make the postcard fully opaque inside the window so we don't re-shade the internal drop shadow
-    postcard_cropped = postcard_cropped.copy()
-    postcard_cropped.putalpha(255)
-    px = window_inset
-    py = window_inset
-    card_layer.alpha_composite(postcard_cropped, dest=(px, py))
+    window_mask_scaled = mask_window.resize(postcard_scaled.size, resample=Image.Resampling.NEAREST)
+    postcard_scaled.putalpha(window_mask_scaled)
+    px = window_inset + max(0, (window_w - postcard_scaled.width) // 2)
+    py = window_inset + max(0, (window_h - postcard_scaled.height) // 2)
+    postcard_full = postcard_scaled.copy()
+    card_layer.alpha_composite(postcard_full, dest=(px, py))
+
+    postcard_before_alpha = card_layer.copy()
+    card_layer_alpha = ImageChops.multiply(card_layer.split()[-1], mask_card)
+    card_layer.putalpha(card_layer_alpha)
+    postcard_after_alpha = card_layer
 
     # Clean fully transparent pixels to avoid halo during resample
     alpha_mask = card_layer.getchannel("A")
@@ -264,6 +287,10 @@ def generate_composited_cover(
         card_layer = card_layer.resize(new_size, resample=Image.Resampling.LANCZOS)
 
     card_layer_flat = card_layer
+
+    # Persist full postcard (with border/template) to postcard_path for downstream use.
+    postcard_full = card_layer_flat
+    postcard_full.save(postcard_path)
     card_layer_tilted = card_layer_flat.rotate(rotate_deg, expand=True, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0))
 
     # Shadow based on tilted card alpha
@@ -297,12 +324,46 @@ def generate_composited_cover(
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
         postcard.save(debug_dir / "postcard_original.png")
-        postcard_scaled.save(debug_dir / "postcard_scaled.png")
-        postcard_cropped.save(debug_dir / "postcard_cropped.png")
+        postcard_scaled.save(debug_dir / "debug_face_window.png")
+        texture_source.save(debug_dir / "debug_paper_texture_source.png")
+        card_face_base.save(debug_dir / "debug_paper_texture_resized.png")
+        card_face.save(debug_dir / "debug_paper_texture_final.png")
+        card_face_base.save(debug_dir / "debug_postcard_base_texture.png")
+        card_face.save(debug_dir / "debug_postcard_template_only.png")
+        postcard_full.save(debug_dir / "debug_postcard_with_border.png")
+        mask_card.save(debug_dir / "debug_postcard_alpha.png")
+        window_mask_scaled.save(debug_dir / "debug_window_mask.png")
+        mask_card.save(debug_dir / "debug_card_mask.png")
+        postcard_before_alpha.save(debug_dir / "debug_postcard_before_card_alpha.png")
+        postcard_after_alpha.save(debug_dir / "debug_postcard_after_card_alpha.png")
+        card_face.save(debug_dir / "debug_postcard_paper_rgba.png")
+        postcard_after_alpha.save(debug_dir / "debug_postcard_final.png")
+        cutout_mask.save(debug_dir / "debug_cutout_mask.png")
+        card_face_cutout.save(debug_dir / "debug_postcard_after_cutout.png")
+        crop_meta = {
+            "applied_crop": False,
+            "window_inset": window_inset,
+            "window_size": [window_w, window_h],
+            "postcard_scaled": [postcard_scaled.width, postcard_scaled.height],
+            "placement": [px, py],
+            "saved_postcard_path": str(postcard_path),
+            "paper_crop_applied": False,
+            "paper_size": [card_size[0], card_size[1]],
+        }
+        (debug_dir / "debug_postcard_crop.json").write_text(json.dumps(crop_meta, indent=2))
         card_layer_flat.save(debug_dir / "card_layer_flat.png")
         card_layer_tilted.save(debug_dir / "card_layer_tilted.png")
         shadow_rot.save(debug_dir / "shadow.png")
         final.save(debug_dir / "final_composite.png")
+        pipeline = {
+            "postcard_original": [postcard.width, postcard.height],
+            "postcard_scaled_window": [postcard_scaled.width, postcard_scaled.height],
+            "postcard_with_border": [postcard_full.width, postcard_full.height],
+            "card_layer_flat": [card_layer_flat.width, card_layer_flat.height],
+            "card_layer_tilted": [card_layer_tilted.width, card_layer_tilted.height],
+            "final_composite": [final.width, final.height],
+        }
+        (debug_dir / "debug_pipeline_stage_names.json").write_text(json.dumps(pipeline, indent=2))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     final.convert("RGB").save(out_path, format="PNG")

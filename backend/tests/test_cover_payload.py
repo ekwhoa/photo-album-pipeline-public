@@ -161,6 +161,52 @@ def test_composite_preserves_shadow(tmp_path):
     assert observed_mean <= expected_mean + 1.5
 
 
+def test_composite_preserves_postcard_border(tmp_path):
+    postcard_path = tmp_path / "postcard.png"
+    composite = tmp_path / "cover_front_composite.png"
+    texture = tmp_path / "texture.jpg"
+    debug_dir = tmp_path / "debug"
+
+    # Postcard face is uniform; border must be introduced by compositing.
+    w, h = 400, 300
+    postcard = Image.new("RGBA", (w, h), (10, 20, 200, 255))
+    postcard.save(postcard_path, format="PNG")
+    # Texture with lighter border tone
+    tex = Image.new("RGB", (1800, 1200), (230, 225, 210))
+    ImageDraw.Draw(tex).rectangle(
+        (0, 0, tex.width - 1, tex.height - 1), outline=(180, 170, 150), width=80
+    )
+    tex.save(texture, format="JPEG")
+
+    generate_composited_cover(
+        postcard_path=postcard_path,
+        out_path=composite,
+        texture_path=texture,
+        rotate_deg=0.0,
+        inset_frac=0.1,
+        shadow_offset=(0, 0),
+        shadow_radius=1,
+        debug_dir=debug_dir,
+    )
+
+    final = Image.open(composite).convert("RGBA")
+    updated_postcard = Image.open(postcard_path).convert("RGBA")
+
+    # Samples: postcard corners should differ from center because border/template is added.
+    corner_px = updated_postcard.getpixel((2, 2))
+    center_px = updated_postcard.getpixel((updated_postcard.width // 2, updated_postcard.height // 2))
+    assert corner_px != center_px
+
+    # Composite should also retain border difference
+    final_corner = final.getpixel((2, 2))
+    final_center = final.getpixel((final.width // 2, final.height // 2))
+    assert final_corner != final_center
+
+    # Debug artifacts for validation
+    assert (debug_dir / "debug_postcard_with_border.png").exists()
+    assert (debug_dir / "debug_face_window.png").exists()
+
+
 def test_per_letter_face_has_no_dark_halo(tmp_path):
     # Synthetic letter image with solid color and transparent edges
     letter_img = Image.new("RGBA", (120, 120), (20, 160, 40, 255))
