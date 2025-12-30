@@ -9,6 +9,7 @@ import math
 import sqlite3
 import threading
 import time
+import json
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
@@ -84,6 +85,8 @@ MARKER_OUTLINE_WIDTH_PLACE = 3
 PLACE_MARKER_FILL = (255, 235, 59, 255)  # yellow
 PLACE_MARKER_OUTLINE = (0, 0, 0, 255)  # black
 
+_CANONICAL_CACHE: dict[str, "CanonicalRoute"] = {}
+
 
 @dataclass
 class RouteMarker:
@@ -109,13 +112,23 @@ def render_route_map(
         (relative_path, absolute_path). Empty strings if rendering fails or insufficient points.
         relative_path is relative to the static mount root (data/).
     """
+    canonical = build_canonical_route_points(points)
+    if os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1":
+        try:
+            print(
+                f"[MAP][debug] canonical_count={len(canonical.points)} first={canonical.points[0] if canonical.points else None} last={canonical.points[-1] if canonical.points else None}"
+            )
+        except Exception:
+            pass
+    _CANONICAL_CACHE[book_id] = canonical
     return _render_route_image(
         book_id,
-        points,
+        canonical.points,
         markers=markers,
         width=1600,
         height=1000,
         filename_prefix="route",
+        preprocessed=True,
     )
 
 
@@ -146,8 +159,34 @@ def render_day_route_image(
         poly = seg.get("polyline") or []
         if len(poly) >= 2:
             points.extend([(lat, lon) for lat, lon in poly])
+    if len(points) < 2:
+        return "", ""
+    canonical = _CANONICAL_CACHE.get(book_id)
+    if canonical and canonical.points:
+        day_bbox = _compute_day_bbox(points)
+        start_end_override = _map_day_points_to_canonical_indices(points, canonical.points)
+        cache_state = "hit"
+        if os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1":
+            print(
+                f"[MAP][debug] day uses canonical cache={cache_state} canonical_count={len(canonical.points)} day_bbox={day_bbox}"
+            )
+        if filename_prefix is None:
+            filename_prefix = "day_route"
+        return _render_route_image(
+            book_id,
+            canonical.points,
+            markers=[],
+            width=width,
+            height=height,
+            filename_prefix=filename_prefix,
+            preprocessed=True,
+            bbox_override=day_bbox,
+            start_end_override=start_end_override,
+        )
     if filename_prefix is None:
         filename_prefix = "day_route"
+    if os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1":
+        print("[MAP][debug] day render canonical cache miss; falling back to legacy preprocessing")
     return _render_route_image(
         book_id,
         points,
@@ -306,23 +345,21 @@ def _latlon_to_tile_xy(lat: float, lon: float, zoom: int) -> Tuple[float, float]
     return x, y
 
 
-def _draw_tile_background(
-    img: Image.Image,
+def _compute_tile_layout(
     bbox: dict[str, float],
-) -> bool:
+    img_width: int,
+    img_height: int,
+) -> Optional[dict[str, float]]:
     """
-    Attempt to draw a tile background behind the route.
-    Returns True if tiles were drawn, False to fall back.
+    Compute tile layout (zoom, scale, offsets) for the given bbox.
+    Returns a dict with keys: zoom, x_min, x_max, y_min, y_max, scaled_tile_size, offset_x, offset_y.
     """
-    if not MAP_TILES_ENABLED or not MAP_TILE_URL_TEMPLATE:
-        return False
-
     lat_min = bbox.get("min_lat")
     lat_max = bbox.get("max_lat")
     lon_min = bbox.get("min_lon")
     lon_max = bbox.get("max_lon")
     if None in (lat_min, lat_max, lon_min, lon_max):
-        return False
+        return None
 
     lat_span = max(1e-6, abs(lat_max - lat_min))
     lon_span = max(1e-6, abs(lon_max - lon_min))
@@ -345,12 +382,50 @@ def _draw_tile_background(
     tile_size = 256
     span_px_x = (x_max - x_min + 1) * tile_size
     span_px_y = (y_max - y_min + 1) * tile_size
-    scale = min(img.width / span_px_x, img.height / span_px_y)
+    scale = min(img_width / span_px_x, img_height / span_px_y)
     if scale <= 0:
-        return False
+        return None
     scaled_tile_size = max(1, int(tile_size * scale))
-    offset_x = int((img.width - span_px_x * scale) / 2)
-    offset_y = int((img.height - span_px_y * scale) / 2)
+    offset_x = int((img_width - span_px_x * scale) / 2)
+    offset_y = int((img_height - span_px_y * scale) / 2)
+
+    return {
+        "zoom": zoom,
+        "x_min": x_min,
+        "x_max": x_max,
+        "y_min": y_min,
+        "y_max": y_max,
+        "scaled_tile_size": scaled_tile_size,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+    }
+
+
+def _draw_tile_background(
+    img: Image.Image,
+    bbox: dict[str, float],
+    layout: Optional[dict[str, float]] = None,
+) -> tuple[bool, Optional[dict[str, float]]]:
+    """
+    Attempt to draw a tile background behind the route.
+    Returns True if tiles were drawn, False to fall back.
+    """
+    if not MAP_TILES_ENABLED or not MAP_TILE_URL_TEMPLATE:
+        return False, None
+
+    if layout is None:
+        layout = _compute_tile_layout(bbox, img.width, img.height)
+    if not layout:
+        return False, None
+
+    zoom = int(layout["zoom"])
+    x_min = int(layout["x_min"])
+    x_max = int(layout["x_max"])
+    y_min = int(layout["y_min"])
+    y_max = int(layout["y_max"])
+    scaled_tile_size = int(layout["scaled_tile_size"])
+    offset_x = int(layout["offset_x"])
+    offset_y = int(layout["offset_y"])
 
     any_tile = False
     for ty in range(y_min, y_max + 1):
@@ -364,7 +439,7 @@ def _draw_tile_background(
             py = offset_y + int((ty - y_min) * scaled_tile_size)
             img.paste(tile_resized, (px, py))
 
-    return any_tile
+    return any_tile, layout
 
 
 def _apply_tile_overlay(bg: Image.Image) -> None:
@@ -391,12 +466,20 @@ def _draw_route_markers(
     base_width: int,
     start_outline: Tuple[int, int, int, int],
     end_outline: Tuple[int, int, int, int],
+    start_end_override: Optional[Tuple[int, int]] = None,
 ) -> None:
     """Draw neutral start/end markers so they work on tiles or grid."""
     if not points:
         return
-    start = points[0]
-    end = points[-1]
+    if start_end_override:
+        start_idx, end_idx = start_end_override
+        start_idx = max(0, min(len(points) - 1, start_idx))
+        end_idx = max(0, min(len(points) - 1, end_idx))
+        start = points[start_idx]
+        end = points[end_idx]
+    else:
+        start = points[0]
+        end = points[-1]
     r = max(ROUTE_MARKER_RADIUS, int(base_width * 1.4))
     for (x, y), outline in ((start, start_outline), (end, end_outline)):
         bbox = (x - r, y - r, x + r, y + r)
@@ -410,6 +493,9 @@ def _render_route_image(
     height: int,
     filename_prefix: str = "route",
     markers: Optional[List[RouteMarker]] = None,
+    preprocessed: bool = False,
+    bbox_override: Optional[dict] = None,
+    start_end_override: Optional[Tuple[int, int]] = None,
 ) -> Tuple[str, str]:
     """
     Shared rendering logic for trip and day maps.
@@ -421,58 +507,72 @@ def _render_route_image(
 
     # Preserve original ordering
     indexed_points = [(idx, lat, lon) for idx, (lat, lon) in enumerate(points)]
+    tiles_layout: Optional[dict] = None
 
     try:
-        clusters = _cluster_points(indexed_points, radius_km=40.0)
-        main_cluster = _select_dominant_cluster(clusters, len(indexed_points))
-        cluster_points = _filter_points_in_cluster(indexed_points, main_cluster)
-        ignored_by_cluster = len(points) - len(cluster_points)
+        if not preprocessed:
+            clusters = _cluster_points(indexed_points, radius_km=40.0)
+            main_cluster = _select_dominant_cluster(clusters, len(indexed_points))
+            cluster_points = _filter_points_in_cluster(indexed_points, main_cluster)
+            ignored_by_cluster = len(points) - len(cluster_points)
 
-        if len(cluster_points) < 2:
-            core_points = [(lat, lon) for _, lat, lon in indexed_points]
-        else:
-            center_lat = sum(lat for lat, _ in cluster_points) / len(cluster_points)
-            center_lon = sum(lon for _, lon in cluster_points) / len(cluster_points)
-
-            distances = [
-                _haversine_km(lat, lon, center_lat, center_lon) for lat, lon in cluster_points
-            ]
-            median_distance_km = median(distances)
-            max_core_distance_km = max(5.0, 3 * median_distance_km)
-
-            trimmed_points = [
-                (lat, lon)
-                for (lat, lon), dist in zip(cluster_points, distances)
-                if dist <= max_core_distance_km
-            ]
-
-            if len(trimmed_points) < 2:
-                core_points = cluster_points
+            if len(cluster_points) < 2:
+                core_points = [(lat, lon) for _, lat, lon in indexed_points]
             else:
-                core_points = trimmed_points
+                center_lat = sum(lat for lat, _ in cluster_points) / len(cluster_points)
+                center_lon = sum(lon for _, lon in cluster_points) / len(cluster_points)
 
-        if ignored_by_cluster > 0:
-            print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; ignored {ignored_by_cluster} far-off points for rendering")
+                distances = [
+                    _haversine_km(lat, lon, center_lat, center_lon) for lat, lon in cluster_points
+                ]
+                median_distance_km = median(distances)
+                max_core_distance_km = max(5.0, 3 * median_distance_km)
+
+                trimmed_points = [
+                    (lat, lon)
+                    for (lat, lon), dist in zip(cluster_points, distances)
+                    if dist <= max_core_distance_km
+                ]
+
+                if len(trimmed_points) < 2:
+                    core_points = cluster_points
+                else:
+                    core_points = trimmed_points
+
+            if ignored_by_cluster > 0:
+                print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; ignored {ignored_by_cluster} far-off points for rendering")
+            else:
+                print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; no points ignored")
+
+            simplified_points = simplify_route(core_points, max_points=25, min_distance_km=0.1)
+            print(
+                f"[MAP] Simplified route (raw {len(points)} -> cluster {len(core_points)} -> "
+                f"{len(simplified_points)} points) targeting ~20-30 pts"
+            )
         else:
-            print(f"[MAP] Using dominant cluster with {len(cluster_points)} points; no points ignored")
+            cluster_points = points
+            core_points = points
+            ignored_by_cluster = 0
+            simplified_points = list(points)
+            print(f"[MAP] Using preprocessed route with {len(simplified_points)} points")
 
-        simplified_points = simplify_route(core_points, max_points=25, min_distance_km=0.1)
-        print(
-            f"[MAP] Simplified route (raw {len(points)} -> cluster {len(core_points)} -> "
-            f"{len(simplified_points)} points) targeting ~20-30 pts"
-        )
-
-        bbox = _compute_bbox(simplified_points)
+        bbox = bbox_override if bbox_override else _compute_bbox(simplified_points)
         target_aspect = max((width - 2 * max(70, ROUTE_CANVAS_PADDING_PX)) / max(height - 2 * max(70, ROUTE_CANVAS_PADDING_PX), 1), 1e-3)
+        span_lat = bbox.get("span_lat", bbox["max_lat"] - bbox["min_lat"])
+        span_lon = bbox.get("span_lon", bbox["max_lon"] - bbox["min_lon"])
         min_lat_n, max_lat_n, min_lon_n, max_lon_n = _normalize_bbox_aspect(
             bbox["min_lat"], bbox["max_lat"], bbox["min_lon"], bbox["max_lon"], target_aspect
         )
+        span_lat_n = max_lat_n - min_lat_n
+        span_lon_n = max_lon_n - min_lon_n
         bbox.update(
             {
                 "min_lat": min_lat_n,
                 "max_lat": max_lat_n,
                 "min_lon": min_lon_n,
                 "max_lon": max_lon_n,
+                "span_lat": span_lat_n,
+                "span_lon": span_lon_n,
             }
         )
         print(
@@ -481,12 +581,16 @@ def _render_route_image(
             f"span_lat={bbox['span_lat']:.4f} span_lon={bbox['span_lon']:.4f}"
         )
 
-        img = Image.new("RGB", (width, height), color="#f6f8fa")
-        draw = ImageDraw.Draw(img)
-        route_width = 6
-        route_color = "#2e8bc0"
-        margin_px = 90
-        coords = _map_points_to_canvas(simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9)
+        draw_width, draw_height = width * UPSCALE_FACTOR, height * UPSCALE_FACTOR
+        margin_px = max(70, ROUTE_CANVAS_PADDING_PX)
+        if MAP_TILES_ENABLED and MAP_TILE_URL_TEMPLATE:
+            tiles_layout = _compute_tile_layout(bbox, draw_width, draw_height)
+        if tiles_layout:
+            coords = _map_points_to_tile_pixels(simplified_points, tiles_layout)
+        else:
+            coords = _map_points_to_canvas(
+                simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9, bbox=bbox
+            )
 
         print(
             f"[MAP] Drawing {len(simplified_points)} core points "
@@ -504,31 +608,37 @@ def _render_route_image(
         start_color = (64, 224, 208, 255)  # turquoise
         end_color = (244, 114, 182, 255)  # coral/pink
         marker_outline = (255, 255, 255, 60)
-        margin_px = max(70, ROUTE_CANVAS_PADDING_PX)
-        coords = _map_points_to_canvas(
-            simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9, bbox=bbox
-        )
         marker_coords_scaled: List[Tuple[float, float]] = []
         if markers:
             marker_points = [(marker.lat, marker.lon) for marker in markers]
-            marker_coords = _map_points_to_canvas(
-                marker_points,
-                width,
-                height,
-                margin_px=margin_px,
-                shrink_factor=0.9,
-                bbox=bbox,
+            if tiles_layout:
+                marker_coords = _map_points_to_tile_pixels(marker_points, tiles_layout)
+            else:
+                marker_coords = _map_points_to_canvas(
+                    marker_points,
+                    width,
+                    height,
+                    margin_px=margin_px,
+                    shrink_factor=0.9,
+                    bbox=bbox,
+                )
+            marker_coords_scaled = (
+                marker_coords
+                if tiles_layout
+                else [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in marker_coords]
             )
-            marker_coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in marker_coords]
         smoothed_coords = _smooth_polyline(
             coords,
             min_total_points=250,
             max_segment_spacing_px=5.0,
         )
 
-        draw_width, draw_height = width * UPSCALE_FACTOR, height * UPSCALE_FACTOR
-        coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
-        smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
+        if tiles_layout:
+            coords_scaled = coords
+            smoothed_scaled = smoothed_coords
+        else:
+            coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
+            smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
 
         # First try tiles on a transparent base; fall back to the legacy grid if tiles fail.
         background_img = Image.new("RGBA", (draw_width, draw_height), (0, 0, 0, 0))
@@ -536,12 +646,12 @@ def _render_route_image(
 
         tiles_ok = False
         try:
-            tiles_ok = _draw_tile_background(background_img, bbox)
+            tiles_ok, tiles_layout = _draw_tile_background(background_img, bbox, layout=tiles_layout)
         except Exception as exc:
             print(f"[MAP] Tile background failed, falling back to grid: {exc}")
             tiles_ok = False
 
-        if tiles_ok:
+        if tiles_ok and tiles_layout:
             _apply_tile_overlay(background_img)
         if not tiles_ok:
             background_img = Image.new("RGBA", (draw_width, draw_height), color=bg_color)
@@ -630,7 +740,14 @@ def _render_route_image(
                 overlay_draw.ellipse(marker_bbox, fill=fill, outline=outline, width=stroke_scaled)
 
             # Draw the route's start/end markers (preserve existing behavior/style)
-            _draw_route_markers(overlay_draw, coords_scaled, base_width, start_color, end_color)
+            _draw_route_markers(
+                overlay_draw,
+                coords_scaled,
+                base_width,
+                start_color,
+                end_color,
+                start_end_override=start_end_override,
+            )
 
             # Debug: how many place markers will we draw (if any)
             if place_pairs:
@@ -669,6 +786,30 @@ def _render_route_image(
         rel_path = str(output_path.relative_to(DATA_DIR))
         abs_path = str(output_path.resolve())
         print(f"[MAP] Rendered map for book {book_id} to {rel_path}")
+        if os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1" and tiles_layout:
+            debug_payload = {
+                "bbox": bbox,
+                "tiles": {
+                    "zoom": int(tiles_layout["zoom"]),
+                    "x_min": tiles_layout["x_min"],
+                    "x_max": tiles_layout["x_max"],
+                    "y_min": tiles_layout["y_min"],
+                    "y_max": tiles_layout["y_max"],
+                    "scaled_tile_size": tiles_layout["scaled_tile_size"],
+                    "offset_x": tiles_layout["offset_x"],
+                    "offset_y": tiles_layout["offset_y"],
+                },
+                "route_px": {
+                    "first": coords[0] if coords else None,
+                    "last": coords[-1] if coords else None,
+                },
+            }
+            debug_path = MAP_OUTPUT_DIR / f"book_{book_id}_{filename_prefix}_tiles_debug.json"
+            try:
+                with open(debug_path, "w", encoding="utf-8") as fp:
+                    json.dump(debug_payload, fp, indent=2)
+            except Exception as exc:
+                print(f"[MAP][debug] Failed to write tile debug JSON: {exc}")
         return rel_path, abs_path
     except Exception as e:
         print(f"[map_route_renderer] Failed to render route map for book {book_id}: {e}")
@@ -891,6 +1032,28 @@ def _map_points_to_canvas(
     return mapped
 
 
+def _map_points_to_tile_pixels(
+    points: List[Tuple[float, float]],
+    layout: dict[str, float],
+) -> List[Tuple[float, float]]:
+    """Project lat/lon directly into tile pixel space using the same layout as the background tiles."""
+    if not points:
+        return []
+    zoom = int(layout["zoom"])
+    x_min = layout["x_min"]
+    y_min = layout["y_min"]
+    scaled_tile_size = layout["scaled_tile_size"]
+    offset_x = layout["offset_x"]
+    offset_y = layout["offset_y"]
+    mapped: List[Tuple[float, float]] = []
+    for lat, lon in points:
+        x_tile, y_tile = _latlon_to_tile_xy(lat, lon, zoom)
+        px = offset_x + (x_tile - x_min) * scaled_tile_size
+        py = offset_y + (y_tile - y_min) * scaled_tile_size
+        mapped.append((px, py))
+    return mapped
+
+
 def _draw_marker(draw: ImageDraw.ImageDraw, center: Tuple[float, float], radius: int, fill: str, outline: str) -> None:
     """Draw a circular marker."""
     x, y = center
@@ -1050,6 +1213,58 @@ def _smooth_polyline(
     return smoothed
 
 
+def _core_points_for_bbox(raw_points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Reuse the dominant-cluster trimming for bbox calculations without simplifying."""
+    if len(raw_points) < 2:
+        return raw_points
+    indexed_points = [(idx, lat, lon) for idx, (lat, lon) in enumerate(raw_points)]
+    clusters = _cluster_points(indexed_points, radius_km=40.0)
+    main_cluster = _select_dominant_cluster(clusters, len(indexed_points))
+    cluster_points = _filter_points_in_cluster(indexed_points, main_cluster)
+    if len(cluster_points) < 2:
+        return [(lat, lon) for _, lat, lon in indexed_points]
+
+    center_lat = sum(lat for lat, _ in cluster_points) / len(cluster_points)
+    center_lon = sum(lon for _, lon in cluster_points) / len(cluster_points)
+    distances = [_haversine_km(lat, lon, center_lat, center_lon) for lat, lon in cluster_points]
+    median_distance_km = median(distances)
+    max_core_distance_km = max(5.0, 3 * median_distance_km)
+    trimmed_points = [
+        (lat, lon)
+        for (lat, lon), dist in zip(cluster_points, distances)
+        if dist <= max_core_distance_km
+    ]
+    return trimmed_points if len(trimmed_points) >= 2 else [(lat, lon) for _, lat, lon in cluster_points]
+
+
+def _compute_day_bbox(day_points: List[Tuple[float, float]]) -> Optional[dict]:
+    if len(day_points) < 2:
+        return None
+    core = _core_points_for_bbox(day_points)
+    return _compute_bbox(core)
+
+
+def _map_day_points_to_canonical_indices(
+    day_points: List[Tuple[float, float]],
+    canonical_points: List[Tuple[float, float]],
+) -> Optional[Tuple[int, int]]:
+    if not day_points or not canonical_points:
+        return None
+    indices: List[int] = []
+    for lat, lon in day_points:
+        best_idx = 0
+        best_dist = float("inf")
+        for idx, (c_lat, c_lon) in enumerate(canonical_points):
+            dist = _haversine_km(lat, lon, c_lat, c_lon)
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+        indices.append(best_idx)
+    if not indices:
+        return None
+    return min(indices), max(indices)
+
+
 def debug_render_synthetic_routes(output_dir: Path) -> None:
     """
     Generate synthetic route images for quick visual debugging without external data.
@@ -1150,3 +1365,48 @@ def debug_render_synthetic_routes(output_dir: Path) -> None:
         final_img = img.resize((width, height), resample=Image.LANCZOS)
         final_img.save(out_path, format="PNG")
         print(f"[MAP][DEBUG] Saved synthetic route '{name}' to {out_path}")
+@dataclass
+class CanonicalRoute:
+    points: List[Tuple[float, float]]
+    ignored_by_cluster: int
+
+
+def build_canonical_route_points(raw_points: List[Tuple[float, float]]) -> CanonicalRoute:
+    """
+    Computes the exact polyline currently drawn for the trip map (cluster -> trim -> simplify).
+    No behavior change relative to previous inlined logic.
+    """
+    if len(raw_points) < 2:
+        return CanonicalRoute(points=raw_points, ignored_by_cluster=0)
+
+    indexed_points = [(idx, lat, lon) for idx, (lat, lon) in enumerate(raw_points)]
+    clusters = _cluster_points(indexed_points, radius_km=40.0)
+    main_cluster = _select_dominant_cluster(clusters, len(indexed_points))
+    cluster_points = _filter_points_in_cluster(indexed_points, main_cluster)
+    ignored_by_cluster = len(raw_points) - len(cluster_points)
+
+    if len(cluster_points) < 2:
+        core_points = [(lat, lon) for _, lat, lon in indexed_points]
+    else:
+        center_lat = sum(lat for lat, _ in cluster_points) / len(cluster_points)
+        center_lon = sum(lon for _, lon in cluster_points) / len(cluster_points)
+
+        distances = [
+            _haversine_km(lat, lon, center_lat, center_lon) for lat, lon in cluster_points
+        ]
+        median_distance_km = median(distances)
+        max_core_distance_km = max(5.0, 3 * median_distance_km)
+
+        trimmed_points = [
+            (lat, lon)
+            for (lat, lon), dist in zip(cluster_points, distances)
+            if dist <= max_core_distance_km
+        ]
+
+        if len(trimmed_points) < 2:
+            core_points = [(lat, lon) for _, lat, lon in cluster_points]
+        else:
+            core_points = trimmed_points
+
+    simplified_points = simplify_route(core_points, max_points=25, min_distance_km=0.1)
+    return CanonicalRoute(points=simplified_points, ignored_by_cluster=ignored_by_cluster)
