@@ -182,6 +182,12 @@ def plan_book(
     # Subtitle reused from trip summary helper (one-sentence blurb)
     subtitle_exif = compute_exif_date_range(assets)[2]
     trip_subtitle = subtitle_exif or f"A {day_count}-day trip with {photo_count} photos"
+    # Photobook spec v1 metadata (defaults/stubs; later steps may populate)
+    spec_meta = _build_photobook_spec_v1_metadata(
+        assets=assets,
+        gps_photo_count=gps_photo_count,
+        total_photo_count=photo_count,
+    )
 
     # Create front cover
     front_cover = Page(
@@ -508,6 +514,7 @@ def plan_book(
         auto_hidden_hidden_assets_count=auto_hidden_hidden_assets_count,
         considered_count=considered_count,
         used_count=used_count,
+        photobook_spec_v1=spec_meta,
     )
 
 
@@ -586,6 +593,30 @@ def compute_gps_stats(assets: List[Asset]) -> Tuple[int, int]:
         rounded = (round(lat, 3), round(lon, 3))
         distinct_set.add(rounded)
     return gps_photo_count, len(distinct_set)
+
+
+def _build_photobook_spec_v1_metadata(
+    *,
+    assets: List[Asset],
+    gps_photo_count: int,
+    total_photo_count: int,
+) -> Dict[str, Any]:
+    """Populate the spec contract fields with deterministic defaults."""
+    geo_coverage = None
+    if total_photo_count > 0:
+        geo_coverage = gps_photo_count / float(total_photo_count)
+    return {
+        "geo_coverage": geo_coverage,
+        "map_mode": "Auto",
+        "chapter_mode": "Off",
+        "legend_mode": "Balanced",
+        "accent_color": None,
+        "picks_source": "auto",
+        "trip_highlights": [],
+        "trip_gallery_picks": [],
+        "stops_for_legend": [],
+        "chapter_boundaries": [],
+    }
 
 
 def _dedupe_assets_by_day(asset_ids: List[str], asset_lookup: Dict[str, Asset]) -> Tuple[List[str], Dict[str, Any]]:

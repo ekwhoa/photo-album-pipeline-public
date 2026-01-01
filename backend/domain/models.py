@@ -172,6 +172,7 @@ class Book:
     auto_hidden_hidden_assets_count: int = 0
     considered_count: int = 0
     used_count: int = 0
+    photobook_spec_v1: Dict[str, Any] = field(default_factory=dict)
     
     @staticmethod
     def generate_id() -> str:
