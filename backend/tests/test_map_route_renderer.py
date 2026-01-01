@@ -1,6 +1,6 @@
 import pytest
 
-import backend.services.map_route_renderer as m
+import services.map_route_renderer as m
 
 
 def _make_segment(points):

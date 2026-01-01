@@ -22,11 +22,22 @@ def test_fixture_harness_smoke(tmp_path):
     _rm_tree(ARTIFACTS_DIR)
     _rm_tree(MAPS_DIR)
 
+    repo_root = Path(__file__).resolve().parents[2]
+    backend_path = repo_root / "backend"
     env = os.environ.copy()
-    env["PYTHONPATH"] = "backend"
+    existing = env.get("PYTHONPATH")
+    prepend = os.pathsep.join([str(repo_root), str(backend_path)])
+    env["PYTHONPATH"] = prepend + (os.pathsep + existing if existing else "")
 
     cmd = [sys.executable, "-m", "backend.scripts.render_fixture_book"]
-    res = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+    res = subprocess.run(
+        cmd,
+        env=env,
+        cwd=str(repo_root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=120,
+    )
     print(res.stdout.decode(errors="ignore"))
     assert res.returncode == 0
 
