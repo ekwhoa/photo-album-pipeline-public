@@ -88,3 +88,9 @@ backend/app.db
 *.tiff
 *.ico
 backend/*.png
+
+# Allow spec reference images
+!docs/specs/assets/
+!docs/specs/assets/**/
+!docs/specs/assets/photobook-structure-v1/
+!docs/specs/assets/photobook-structure-v1/*.png
