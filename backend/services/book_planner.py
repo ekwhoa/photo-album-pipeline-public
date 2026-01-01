@@ -230,27 +230,52 @@ def plan_book(
         if asset and asset.metadata and asset.metadata.gps_lat is not None and asset.metadata.gps_lon is not None:
             route_points.append((asset.metadata.gps_lat, asset.metadata.gps_lon))
     map_route_page: Optional[Page] = None
+    trip_gallery_page: Optional[Page] = None
     interior_start_index = 3
     route_image_rel = ""
     route_image_abs = ""
-    if gps_photo_count > 0 and route_points:
-        route_image_rel, route_image_abs = render_route_map(book_id, route_points)
+    desired_map_mode = (spec_meta.get("map_mode") or "Auto") if isinstance(spec_meta, dict) else "Auto"
+    geo_coverage_val = None
+    if isinstance(spec_meta, dict):
+        geo_coverage_val = spec_meta.get("geo_coverage")
+    if geo_coverage_val is None:
+        geo_coverage_val = 0.0
+    # Decide map vs gallery for the right page of the summary spread
+    should_use_map = False
+    if desired_map_mode == "AlwaysMap":
+        should_use_map = True
+    elif desired_map_mode == "NeverMap":
+        should_use_map = False
+    else:
+        should_use_map = geo_coverage_val >= 0.05
 
-    if gps_photo_count > 0:
-        map_route_page = Page(
-            index=3,
-            page_type=PageType.MAP_ROUTE,
-            payload={
-                "gps_photo_count": gps_photo_count,
-                "distinct_locations": distinct_locations,
-                "route_image_path": route_image_rel,
-                "route_image_abs_path": route_image_abs,
-            },
-        )
-        interior_start_index = 4
+    if should_use_map and gps_photo_count > 0 and route_points:
+        try:
+            route_image_rel, route_image_abs = render_route_map(book_id, route_points)
+            map_route_page = Page(
+                index=3,
+                page_type=PageType.MAP_ROUTE,
+                payload={
+                    "gps_photo_count": gps_photo_count,
+                    "distinct_locations": distinct_locations,
+                    "route_image_path": route_image_rel,
+                    "route_image_abs_path": route_image_abs,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[planner] map render failed for book %s, falling back to gallery: %s", book_id, exc)
+            map_route_page = None
+            should_use_map = False
     
     # Deduplicate near-identical shots per day (order preserved)
     deduped_ids, dedup_summary = _dedupe_assets_by_day(all_asset_ids, asset_lookup)
+
+    # Build trip gallery fallback (right page of summary) if map is disabled or failed
+    if map_route_page is None:
+        trip_gallery_page = _create_trip_gallery_page(deduped_ids, asset_lookup, index=3)
+        interior_start_index = 4
+    elif map_route_page:
+        interior_start_index = 4
 
     # Organize deduped ids by day for day intro + grids
     day_asset_sets: List[Tuple[int, Optional[date], List[str]]] = []
@@ -428,6 +453,8 @@ def plan_book(
         payload["segments"] = map_route_segments
         map_route_page.payload = payload
         all_interior_pages.append(map_route_page)
+    elif trip_gallery_page:
+        all_interior_pages.append(trip_gallery_page)
     all_interior_pages.extend(interior_pages)
     all_interior_pages = _apply_daily_grid_hero_variants(all_interior_pages)
     all_interior_pages = _tune_four_photo_variants(all_interior_pages, asset_lookup)
@@ -1379,6 +1406,25 @@ def _create_trip_summary_page(
             "locations_count": locations_count if locations_count > 0 else None,
             "start_date": start_date,
             "end_date": end_date,
+        },
+    )
+
+
+def _create_trip_gallery_page(
+    asset_ids: List[str],
+    asset_lookup: Dict[str, Asset],
+    index: int,
+    max_items: int = 6,
+) -> Page:
+    """Build a simple trip gallery fallback using the first N assets deterministically."""
+    picks = asset_ids[:max_items]
+    return Page(
+        index=index,
+        page_type=PageType.PHOTO_GRID,
+        payload={
+            "asset_ids": picks,
+            "layout": _select_grid_layout(len(picks), max_items) if picks else "grid_2x3",
+            "layout_variant": "trip_gallery_v1",
         },
     )
 
