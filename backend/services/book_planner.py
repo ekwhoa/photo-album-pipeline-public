@@ -5,6 +5,7 @@ Takes organized days/events and creates a Book structure with
 front cover, trip summary, interior pages, and back cover.
 """
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import date, datetime
 from dataclasses import dataclass
@@ -605,6 +606,54 @@ def _build_photobook_spec_v1_metadata(
     geo_coverage = None
     if total_photo_count > 0:
         geo_coverage = gps_photo_count / float(total_photo_count)
+
+    def _usable_points() -> List[Tuple[float, float]]:
+        pts: List[Tuple[float, float]] = []
+        for a in assets:
+            if not a.metadata:
+                continue
+            lat = a.metadata.gps_lat
+            lon = a.metadata.gps_lon
+            if lat is None or lon is None:
+                continue
+            if not (math.isfinite(lat) and math.isfinite(lon)):
+                continue
+            if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+                continue
+            pts.append((lat, lon))
+        return pts
+
+    def _build_stops(points: List[Tuple[float, float]]) -> List[Dict[str, Any]]:
+        if not points:
+            return []
+        clusters: Dict[Tuple[float, float], List[Tuple[float, float]]] = {}
+        # Round to 2 decimal places (~1 km) to keep coarse, stable clusters.
+        for lat, lon in points:
+            key = (round(lat, 2), round(lon, 2))
+            clusters.setdefault(key, []).append((lat, lon))
+        stops: List[Dict[str, Any]] = []
+        for key, pts in clusters.items():
+            count = len(pts)
+            avg_lat = sum(p[0] for p in pts) / count
+            avg_lon = sum(p[1] for p in pts) / count
+            stops.append(
+                {
+                    "label": None,  # Will fallback to Stop N below
+                    "lat": avg_lat,
+                    "lon": avg_lon,
+                    "photo_count": count,
+                }
+            )
+        # Deterministic ordering by photo_count desc, then lat/lon.
+        stops.sort(key=lambda s: (-int(s.get("photo_count") or 0), float(s.get("lat") or 0.0), float(s.get("lon") or 0.0)))
+        # Assign stable labels if none provided
+        for idx, stop in enumerate(stops, start=1):
+            if not stop.get("label"):
+                stop["label"] = f"Stop {idx}"
+        return stops
+
+    stops_for_legend = _build_stops(_usable_points())
+
     return {
         "geo_coverage": geo_coverage,
         "map_mode": "Auto",
@@ -614,7 +663,7 @@ def _build_photobook_spec_v1_metadata(
         "picks_source": "auto",
         "trip_highlights": [],
         "trip_gallery_picks": [],
-        "stops_for_legend": [],
+        "stops_for_legend": stops_for_legend,
         "chapter_boundaries": [],
     }
 

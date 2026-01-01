@@ -64,7 +64,25 @@ def test_plan_includes_photobook_spec_defaults():
     assert spec["picks_source"] == "auto"
     assert spec["trip_highlights"] == []
     assert spec["trip_gallery_picks"] == []
-    assert spec["stops_for_legend"] == []
     assert spec["chapter_boundaries"] == []
     # One of two assets has GPS coords -> coverage 0.5
     assert spec["geo_coverage"] == 0.5
+    assert isinstance(spec["stops_for_legend"], list)
+    assert len(spec["stops_for_legend"]) >= 1
+    first_stop = spec["stops_for_legend"][0]
+    assert "label" in first_stop and "lat" in first_stop and "lon" in first_stop and "photo_count" in first_stop
+    # Deterministic ordering ensures photo_count is descending
+    assert first_stop["photo_count"] >= spec["stops_for_legend"][-1]["photo_count"]
+
+
+def test_plan_geo_coverage_none_when_no_photos():
+    book = plan_book(
+        book_id="b2",
+        title="Empty",
+        size=BookSize.SQUARE_8,
+        days=[],
+        assets=[],
+    )
+    spec = book.photobook_spec_v1
+    assert spec["geo_coverage"] is None
+    assert spec["stops_for_legend"] == []
