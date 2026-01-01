@@ -183,12 +183,6 @@ def plan_book(
     # Subtitle reused from trip summary helper (one-sentence blurb)
     subtitle_exif = compute_exif_date_range(assets)[2]
     trip_subtitle = subtitle_exif or f"A {day_count}-day trip with {photo_count} photos"
-    # Photobook spec v1 metadata (defaults/stubs; later steps may populate)
-    spec_meta = _build_photobook_spec_v1_metadata(
-        assets=assets,
-        gps_photo_count=gps_photo_count,
-        total_photo_count=photo_count,
-    )
 
     # Create front cover
     front_cover = Page(
@@ -234,6 +228,20 @@ def plan_book(
     interior_start_index = 3
     route_image_rel = ""
     route_image_abs = ""
+
+    # Deduplicate near-identical shots per day (order preserved)
+    deduped_ids, dedup_summary = _dedupe_assets_by_day(all_asset_ids, asset_lookup)
+
+    # Photobook spec v1 metadata (computed with dedup info)
+    spec_meta = _build_photobook_spec_v1_metadata(
+        assets=assets,
+        gps_photo_count=gps_photo_count,
+        total_photo_count=photo_count,
+        deduped_ids=deduped_ids,
+        asset_lookup=asset_lookup,
+        days=days,
+    )
+
     desired_map_mode = (spec_meta.get("map_mode") or "Auto") if isinstance(spec_meta, dict) else "Auto"
     geo_coverage_val = None
     if isinstance(spec_meta, dict):
@@ -266,9 +274,6 @@ def plan_book(
             logger.warning("[planner] map render failed for book %s, falling back to gallery: %s", book_id, exc)
             map_route_page = None
             should_use_map = False
-    
-    # Deduplicate near-identical shots per day (order preserved)
-    deduped_ids, dedup_summary = _dedupe_assets_by_day(all_asset_ids, asset_lookup)
 
     # Build trip gallery fallback (right page of summary) if map is disabled or failed
     if map_route_page is None:
@@ -628,6 +633,9 @@ def _build_photobook_spec_v1_metadata(
     assets: List[Asset],
     gps_photo_count: int,
     total_photo_count: int,
+    deduped_ids: List[str],
+    asset_lookup: Dict[str, Asset],
+    days: List[Day],
 ) -> Dict[str, Any]:
     """Populate the spec contract fields with deterministic defaults."""
     geo_coverage = None
@@ -653,33 +661,14 @@ def _build_photobook_spec_v1_metadata(
     def _build_stops(points: List[Tuple[float, float]]) -> List[Dict[str, Any]]:
         if not points:
             return []
-        clusters: Dict[Tuple[float, float], List[Tuple[float, float]]] = {}
-        # Round to 2 decimal places (~1 km) to keep coarse, stable clusters.
-        for lat, lon in points:
-            key = (round(lat, 2), round(lon, 2))
-            clusters.setdefault(key, []).append((lat, lon))
-        stops: List[Dict[str, Any]] = []
-        for key, pts in clusters.items():
-            count = len(pts)
-            avg_lat = sum(p[0] for p in pts) / count
-            avg_lon = sum(p[1] for p in pts) / count
-            stops.append(
-                {
-                    "label": None,  # Will fallback to Stop N below
-                    "lat": avg_lat,
-                    "lon": avg_lon,
-                    "photo_count": count,
-                }
-            )
-        # Deterministic ordering by photo_count desc, then lat/lon.
-        stops.sort(key=lambda s: (-int(s.get("photo_count") or 0), float(s.get("lat") or 0.0), float(s.get("lon") or 0.0)))
-        # Assign stable labels if none provided
-        for idx, stop in enumerate(stops, start=1):
-            if not stop.get("label"):
-                stop["label"] = f"Stop {idx}"
-        return stops
+        return _build_stops_for_legend_from_assets(deduped_ids, asset_lookup, cap=8)
 
     stops_for_legend = _build_stops(_usable_points())
+    trip_highlights = _build_trip_highlights(
+        deduped_ids=deduped_ids,
+        asset_lookup=asset_lookup,
+        days=days,
+    )
 
     return {
         "geo_coverage": geo_coverage,
@@ -688,7 +677,7 @@ def _build_photobook_spec_v1_metadata(
         "legend_mode": "Balanced",
         "accent_color": None,
         "picks_source": "auto",
-        "trip_highlights": [],
+        "trip_highlights": trip_highlights,
         "trip_gallery_picks": [],
         "stops_for_legend": stops_for_legend,
         "chapter_boundaries": [],
@@ -1428,6 +1417,150 @@ def _create_trip_gallery_page(
         },
     )
 
+
+def _build_trip_highlights(
+    *,
+    deduped_ids: List[str],
+    asset_lookup: Dict[str, Asset],
+    days: List[Day],
+    cap: int = 6,
+) -> List[Dict[str, Any]]:
+    """Deterministic highlight picks with light filtering and day diversity."""
+    # Build mapping from asset_id -> day index
+    asset_to_day: Dict[str, int] = {}
+    for day in days:
+        for entry in day.all_entries:
+            asset_to_day[entry.asset_id] = day.index
+
+    highlights: List[Dict[str, Any]] = []
+    per_day_counts: Dict[int, int] = {}
+    for aid in deduped_ids:
+        asset = asset_lookup.get(aid)
+        if not asset:
+            continue
+        # Filter out very low-res assets if dimensions known
+        if asset.metadata and asset.metadata.width and asset.metadata.height:
+            if asset.metadata.width < 400 or asset.metadata.height < 400:
+                continue
+        day_idx = asset_to_day.get(aid, -1)
+        if day_idx >= 0:
+            if per_day_counts.get(day_idx, 0) >= 2:
+                continue
+            per_day_counts[day_idx] = per_day_counts.get(day_idx, 0) + 1
+        highlights.append({"asset_id": aid, "label": None})
+        if len(highlights) >= cap:
+            break
+    return highlights
+
+
+def _cluster_stops_by_distance(
+    geo_points: List[Tuple[int, float, float]],
+    threshold_km: float = 1.0,
+) -> List[Dict[str, Any]]:
+    """Cluster points by proximity and preserve first-appearance ordering."""
+    clusters: List[Dict[str, Any]] = []
+    for idx, lat, lon in geo_points:
+        placed = False
+        for cluster in clusters:
+            c_lat = cluster["lat_sum"] / cluster["count"]
+            c_lon = cluster["lon_sum"] / cluster["count"]
+            if _haversine_km(lat, lon, c_lat, c_lon) <= threshold_km:
+                cluster["lat_sum"] += lat
+                cluster["lon_sum"] += lon
+                cluster["count"] += 1
+                cluster["points"].append((idx, lat, lon))
+                placed = True
+                break
+        if not placed:
+            clusters.append(
+                {
+                    "lat_sum": lat,
+                    "lon_sum": lon,
+                    "count": 1,
+                    "points": [(idx, lat, lon)],
+                    "first_idx": idx,
+                }
+            )
+    # Finalize centroid and ordering
+    finalized: List[Dict[str, Any]] = []
+    for cluster in clusters:
+        count = cluster["count"]
+        finalized.append(
+            {
+                "lat": cluster["lat_sum"] / count,
+                "lon": cluster["lon_sum"] / count,
+                "photo_count": count,
+                "first_idx": min(p[0] for p in cluster["points"]),
+            }
+        )
+    return finalized
+
+
+def _build_stops_for_legend_from_assets(
+    asset_ids_in_order: List[str],
+    asset_lookup: Dict[str, Asset],
+    cap: int = 8,
+) -> List[Dict[str, Any]]:
+    geo_points: List[Tuple[int, float, float]] = []
+    for order_idx, aid in enumerate(asset_ids_in_order):
+        asset = asset_lookup.get(aid)
+        if not asset or not asset.metadata:
+            continue
+        lat = asset.metadata.gps_lat
+        lon = asset.metadata.gps_lon
+        if lat is None or lon is None:
+            continue
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+            continue
+        if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+            continue
+        geo_points.append((order_idx, lat, lon))
+    if not geo_points:
+        return []
+    clusters = _cluster_stops_by_distance(geo_points, threshold_km=1.0)
+    # Sort clusters by first appearance to identify first/last
+    clusters_sorted = sorted(clusters, key=lambda c: c["first_idx"])
+    if not clusters_sorted:
+        return []
+    first_cluster = clusters_sorted[0]
+    last_cluster = clusters_sorted[-1]
+    selected: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    def _cluster_key(c: Dict[str, Any]) -> Tuple:
+        return (c["lat"], c["lon"], c["photo_count"], c["first_idx"])
+
+    for cl in (first_cluster, last_cluster):
+        key = _cluster_key(cl)
+        if key in seen_ids:
+            continue
+        seen_ids.add(key)
+        selected.append(cl)
+
+    # Remaining clusters by photo_count desc then first_idx
+    remaining = [
+        c for c in clusters_sorted if _cluster_key(c) not in seen_ids
+    ]
+    remaining.sort(key=lambda c: (-c["photo_count"], c["first_idx"]))
+    for cl in remaining:
+        if len(selected) >= cap:
+            break
+        selected.append(cl)
+
+    # Cap to max
+    selected = selected[:cap]
+    # Assign stable labels
+    stops: List[Dict[str, Any]] = []
+    for idx, cl in enumerate(selected, start=1):
+        stops.append(
+            {
+                "label": f"Stop {idx}",
+                "lat": cl["lat"],
+                "lon": cl["lon"],
+                "photo_count": cl["photo_count"],
+            }
+        )
+    return stops
 
 def _create_photo_grid_pages(asset_ids: List[str], photos_per_page: int, asset_lookup: Dict[str, Asset], start_index: int = 1) -> List[Page]:
     """Create photo grid pages from asset IDs in order (no reordering)."""

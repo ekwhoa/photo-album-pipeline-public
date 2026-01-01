@@ -63,7 +63,6 @@ def test_plan_includes_photobook_spec_defaults():
     assert spec["chapter_mode"] == "Off"
     assert spec["legend_mode"] == "Balanced"
     assert spec["picks_source"] == "auto"
-    assert spec["trip_highlights"] == []
     assert spec["trip_gallery_picks"] == []
     assert spec["chapter_boundaries"] == []
     # One of two assets has GPS coords -> coverage 0.5
