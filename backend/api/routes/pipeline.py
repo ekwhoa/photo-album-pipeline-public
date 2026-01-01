@@ -113,6 +113,7 @@ async def generate_book(book_id: str):
         book.front_cover = planned_book.front_cover
         book.pages = planned_book.pages
         book.back_cover = planned_book.back_cover
+        book.photobook_spec_v1 = planned_book.photobook_spec_v1
         
         # Compute layouts
         context = RenderContext(

@@ -52,6 +52,7 @@ def _book_from_orm(orm: BookORM) -> Book:
         updated_at=orm.updated_at,
         last_generated=orm.last_generated,
         pdf_path=orm.pdf_path,
+        photobook_spec_v1=getattr(orm, "photobook_spec_v1", {}) or {},
     )
 
 
@@ -64,6 +65,7 @@ def _update_orm_from_book(orm: BookORM, book: Book) -> None:
     orm.front_cover = _page_to_dict(book.front_cover) if book.front_cover else None
     orm.pages = [_page_to_dict(p) for p in book.pages] if book.pages else None
     orm.back_cover = _page_to_dict(book.back_cover) if book.back_cover else None
+    orm.photobook_spec_v1 = _make_json_safe(getattr(book, "photobook_spec_v1", {}) or {})
 
 
 class BooksRepository:

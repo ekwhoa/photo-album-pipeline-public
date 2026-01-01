@@ -366,11 +366,20 @@ def _resolve_asset_src(
     mode: str,
     media_root: str,
     media_base_url: str | None,
+    prefer_thumbnail: bool = False,
 ) -> str:
     """Resolve an asset path for pdf/web modes."""
-    normalized_path = asset.file_path.replace("\\", "/")
+    chosen_path = None
+    if prefer_thumbnail and getattr(asset, "thumbnail_path", None):
+        chosen_path = asset.thumbnail_path
+    else:
+        chosen_path = asset.file_path
+    normalized_path = chosen_path.replace("\\", "/")
     if mode == "pdf":
-        return normalized_path
+        candidate = Path(normalized_path)
+        if not candidate.is_absolute():
+            candidate = Path(media_root) / candidate
+        return candidate.resolve().as_uri()
     base = media_base_url.rstrip("/") if media_base_url else "/media"
     return f"{base}/{normalized_path}"
 
@@ -738,10 +747,12 @@ def _generate_book_html(
         if layout.page_type == PageType.TRIP_SUMMARY:
             setattr(layout, "itinerary_days", itinerary_days)
             setattr(layout, "place_candidates", place_candidates)
+            setattr(layout, "photobook_spec_v1", getattr(book, "photobook_spec_v1", {}) or {})
         if itinerary_days:
             if layout.page_type == PageType.MAP_ROUTE:
                 setattr(layout, "itinerary_days", itinerary_days)
                 setattr(layout, "place_candidates", place_candidates)
+                setattr(layout, "photobook_spec_v1", getattr(book, "photobook_spec_v1", {}) or {})
                 if not getattr(layout, "book_id", None):
                     setattr(layout, "book_id", getattr(book, "id", None))
             if layout.page_type == PageType.DAY_INTRO:
@@ -1081,6 +1092,8 @@ def _render_map_route_card(
 
     # Build place names text for trip route
     place_names_line = _build_trip_place_names(getattr(layout, "place_candidates", None) or [])
+    spec = getattr(layout, "photobook_spec_v1", {}) or {}
+    stops = spec.get("stops_for_legend") or []
 
     figure_html = ""
     if image_src:
@@ -1092,6 +1105,23 @@ def _render_map_route_card(
     else:
         figure_html = """
             <div class="map-route-placeholder">Route image unavailable</div>
+        """
+
+    legend_html = ""
+    if stops:
+        legend_rows = []
+        for stop in stops:
+            label = stop.get("label") or "Stop"
+            count = stop.get("photo_count")
+            count_text = f" — {count} photos" if count is not None else ""
+            legend_rows.append(
+                f'<div class="map-legend-row"><span class="map-legend-label">{label}</span><span class="map-legend-count">{count_text}</span></div>'
+            )
+        legend_html = f"""
+        <div class="map-route-legend">
+            <div class="map-legend-title">Stops</div>
+            {''.join(legend_rows)}
+        </div>
         """
 
     return f"""
@@ -1158,6 +1188,27 @@ def _render_map_route_card(
                 border: 1px dashed #cbd5e1;
                 font-size: 12pt;
             }}
+            .map-route-legend {{
+                margin-top: 12px;
+                width: 100%;
+                max-width: 190mm;
+                font-size: 10pt;
+                color: #1f2937;
+                border-top: 1px solid #e5e7eb;
+                padding-top: 8px;
+            }}
+            .map-legend-title {{
+                font-weight: 600;
+                margin-bottom: 6px;
+            }}
+            .map-legend-row {{
+                display: flex;
+                justify-content: space-between;
+                padding: 2px 0;
+            }}
+            .map-legend-count {{
+                color: #4b5563;
+            }}
         </style>
         <section class="trip-route-section">
             <header class="trip-route-header">
@@ -1166,6 +1217,7 @@ def _render_map_route_card(
                 {f'<div class="trip-route-place-names">{place_names_line}</div>' if place_names_line else ''}
             </header>
             {figure_html}
+            {legend_html}
         </section>
     </div>
     """
@@ -1173,6 +1225,7 @@ def _render_map_route_card(
 
 def _render_trip_summary_card(
     layout: PageLayout,
+    assets: Dict[str, Asset],
     theme: Theme,
     width_mm: float,
     height_mm: float,
@@ -1264,20 +1317,16 @@ def _render_trip_summary_card(
         return f"{hours:.1f} h"
 
     day_rows = ""
+    max_days_screen = 4
+    max_days_print = 1
+    max_days = max_days_screen if mode == "web" else max_days_print
     if itinerary_days:
         rows: List[str] = []
-        for day in itinerary_days:
+        for idx, day in enumerate(itinerary_days):
+            if idx >= max_days:
+                break
             date_txt = fmt_date(getattr(day, "date_iso", "") or "")
             locations = getattr(day, "locations", None) or []
-            location_labels: List[str] = []
-            if locations:
-                for loc in locations:
-                    label = getattr(loc, "location_short", None) or getattr(
-                        loc, "location_full", None
-                    )
-                    if label:
-                        location_labels.append(label)
-            location_line = " • ".join(location_labels)
             segments_count = len(getattr(day, "stops", []) or [])
             distance_txt = fmt_distance(getattr(day, "segments_total_distance_km", None))
             hours_txt = fmt_hours(getattr(day, "segments_total_duration_hours", None))
@@ -1290,16 +1339,59 @@ def _render_trip_summary_card(
             if hours_txt:
                 stats_parts.append(hours_txt)
             stats_line = " • ".join(stats_parts)
+            location_labels: List[str] = []
+            if locations:
+                for loc in locations:
+                    label = getattr(loc, "location_short", None) or getattr(
+                        loc, "location_full", None
+                    )
+                    if label:
+                        location_labels.append(label)
+            location_line = " • ".join(location_labels)
+            row_body = " • ".join([part for part in [location_line, stats_line] if part])
             rows.append(
                 f"""
                 <div class="trip-summary-day-row">
-                    <div class="trip-summary-day-title">Day {getattr(day, 'day_index', '')} — {date_txt}</div>
-                    {f'<div class="trip-summary-day-location">{location_line}</div>' if location_line else ''}
-                    <div class="trip-summary-day-meta">{stats_line}</div>
+                    <span class="trip-summary-day-title">Day {getattr(day, 'day_index', '')} — {date_txt}</span>
+                    {f'<span class="trip-summary-day-meta">{row_body}</span>' if row_body else ''}
                 </div>
                 """
             )
+        extra_count = max(0, len(itinerary_days) - max_days)
+        if extra_count > 0:
+            rows.append(f'<div class="trip-summary-day-row trip-summary-days-more">+ {extra_count} more days</div>')
         day_rows = f'<div class="trip-summary-days">{"".join(rows)}</div>'
+
+    spec = getattr(layout, "photobook_spec_v1", {}) or {}
+    highlight_items = spec.get("trip_highlights") or []
+    highlight_ids = [h.get("asset_id") for h in highlight_items if h.get("asset_id")]
+
+    highlights_html = ""
+    if highlight_ids:
+        thumbs_parts: List[str] = []
+        max_highlights = min(6, len(highlight_ids))
+        for aid in highlight_ids[:max_highlights]:
+            asset = assets.get(aid)
+            if not asset:
+                continue
+            src = _resolve_asset_src(
+                asset,
+                mode=mode,
+                media_root=media_root,
+                media_base_url=media_base_url,
+                prefer_thumbnail=True,
+            )
+            if src:
+                thumbs_parts.append(f'<div class="trip-highlight-thumb"><img src="{src}" alt="Highlight" /></div>')
+        if thumbs_parts:
+            highlights_html = f"""
+            <div class="trip-highlights">
+                <div class="trip-highlights-title">Highlights</div>
+                <div class="trip-highlights-grid">
+                    {''.join(thumbs_parts)}
+                </div>
+            </div>
+            """
 
     return f"""
     <div class="page trip-summary-page" style="
@@ -1410,21 +1502,80 @@ def _render_trip_summary_card(
             .trip-summary-days {{
                 margin-top: 12px;
             }}
-            .trip-summary-day-row + .trip-summary-day-row {{
-                margin-top: 10px;
+            .trip-summary-day-row {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-top: 8px;
+                font-size: 10pt;
+                color: #1f2937;
+            }}
+            .trip-summary-day-row:first-of-type {{
+                margin-top: 0;
             }}
             .trip-summary-day-title {{
                 font-weight: 600;
-                font-size: 11pt;
-                margin: 0;
-            }}
-            .trip-summary-day-location {{
-                font-size: 10pt;
-                color: #4b5563;
+                font-size: 10.5pt;
             }}
             .trip-summary-day-meta {{
-                font-size: 9pt;
+                font-size: 9.5pt;
                 color: #374151;
+            }}
+            .trip-summary-days-more {{
+                font-weight: 600;
+                color: #111827;
+            }}
+            .trip-highlights {{
+                margin-top: 12px;
+                break-inside: avoid;
+            }}
+            .trip-highlights-title {{
+                font-size: 11pt;
+                font-weight: 600;
+                margin-bottom: 6px;
+                color: #111827;
+            }}
+            .trip-highlights-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(36mm, 1fr));
+                gap: 6px;
+                max-height: 120mm;
+            }}
+            .trip-highlight-thumb {{
+                width: 100%;
+                height: 35mm;
+                position: relative;
+                overflow: hidden;
+                border-radius: 4px;
+                border: 1px solid #e5e7eb;
+                background: #f8fafc;
+            }}
+            .trip-highlight-thumb img {{
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }}
+            @media print {{
+                .trip-summary-day-row {{
+                    font-size: 9pt;
+                    gap: 4px;
+                }}
+                .trip-summary-day-title {{
+                    font-size: 9.5pt;
+                }}
+                .trip-summary-day-meta {{
+                    font-size: 9pt;
+                }}
+                .trip-highlights-grid {{
+                    grid-template-columns: repeat(3, 1fr);
+                    max-height: 80mm;
+                }}
+                .trip-highlight-thumb {{
+                    height: 24mm;
+                }}
             }}
         </style>
         <section class="trip-summary">
@@ -1436,6 +1587,7 @@ def _render_trip_summary_card(
                 {f'<div class="trip-summary-blurb">{blurb}</div>' if blurb else ''}
                 {f'<div class="trip-summary-stats">' + ' '.join([f'<span>{part}</span>' for part in stats_line_parts]) + '</div>' if stats_line_parts else ''}
             </header>
+            {highlights_html}
             {f'''
             <div class="trip-notable-places">
                 <div class="trip-notable-places-title">Notable places</div>
@@ -2043,7 +2195,7 @@ def _render_page_html(
     if layout.page_type == PageType.MAP_ROUTE:
         return _render_map_route_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.TRIP_SUMMARY:
-        return _render_trip_summary_card(layout, theme, width_mm, height_mm, media_root, mode, media_base_url)
+        return _render_trip_summary_card(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.PHOTO_GRID:
         return _render_photo_grid_from_elements(layout, assets, theme, width_mm, height_mm, media_root, mode, media_base_url)
     if layout.page_type == PageType.DAY_INTRO:

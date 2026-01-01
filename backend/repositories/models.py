@@ -21,6 +21,7 @@ class BookORM(Base):
     front_cover = Column(JSON, nullable=True)
     pages = Column(JSON, nullable=True)
     back_cover = Column(JSON, nullable=True)
+    photobook_spec_v1 = Column(JSON, nullable=True)
 
     assets = relationship(
         "AssetORM",
