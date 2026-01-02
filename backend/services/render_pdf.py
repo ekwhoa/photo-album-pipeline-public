@@ -748,13 +748,13 @@ def _generate_book_html(
             setattr(layout, "itinerary_days", itinerary_days)
             setattr(layout, "place_candidates", place_candidates)
             setattr(layout, "photobook_spec_v1", getattr(book, "photobook_spec_v1", {}) or {})
+        if layout.page_type == PageType.MAP_ROUTE:
+            setattr(layout, "itinerary_days", itinerary_days)
+            setattr(layout, "place_candidates", place_candidates)
+            setattr(layout, "photobook_spec_v1", getattr(book, "photobook_spec_v1", {}) or {})
+            if not getattr(layout, "book_id", None):
+                setattr(layout, "book_id", getattr(book, "id", None))
         if itinerary_days:
-            if layout.page_type == PageType.MAP_ROUTE:
-                setattr(layout, "itinerary_days", itinerary_days)
-                setattr(layout, "place_candidates", place_candidates)
-                setattr(layout, "photobook_spec_v1", getattr(book, "photobook_spec_v1", {}) or {})
-                if not getattr(layout, "book_id", None):
-                    setattr(layout, "book_id", getattr(book, "id", None))
             if layout.page_type == PageType.DAY_INTRO:
                 payload = getattr(layout, "payload", None) or {}
                 day_idx = payload.get("day_index")
@@ -1124,6 +1124,51 @@ def _render_map_route_card(
         </div>
         """
 
+    itinerary_html = ""
+    itinerary_days = getattr(layout, "itinerary_days", None) or []
+
+    def fmt_date(date_iso: str) -> str:
+        if not date_iso:
+            return ""
+        try:
+            from datetime import datetime
+
+            dt = datetime.fromisoformat(date_iso)
+            return dt.strftime("%B %d, %Y")
+        except Exception:
+            return str(date_iso)
+
+    def location_for_day(day: Any) -> str:
+        label = getattr(day, "location_short", None) or getattr(day, "location_full", None)
+        if label:
+            return label
+        locations = getattr(day, "locations", None) or []
+        for loc in locations:
+            loc_label = getattr(loc, "location_short", None) or getattr(loc, "location_full", None)
+            if loc_label:
+                return loc_label
+        return fmt_date(getattr(day, "date_iso", "") or "")
+
+    if itinerary_days:
+        rows: List[str] = []
+        for idx, day in enumerate(itinerary_days, start=1):
+            label = location_for_day(day) or fmt_date(getattr(day, "date_iso", "") or "")
+            rows.append(
+                f'<div class="trip-itinerary-row"><span class="trip-itinerary-day">Day {idx}</span><span class="trip-itinerary-label">{label}</span></div>'
+            )
+        visible_rows = rows[:5]
+        remaining = len(rows) - len(visible_rows)
+        if remaining > 0:
+            visible_rows.append(f'<div class="trip-itinerary-row trip-itinerary-more">+{remaining} more days</div>')
+        itinerary_html = f"""
+        <div class="trip-itinerary-panel">
+            <div class="trip-itinerary-title">Trip Itinerary</div>
+            <div class="trip-itinerary-list">
+                {''.join(visible_rows)}
+            </div>
+        </div>
+        """
+
     return f"""
     <div class="page map-route-page" style="
         position: relative;
@@ -1209,6 +1254,51 @@ def _render_map_route_card(
             .map-legend-count {{
                 color: #4b5563;
             }}
+            .trip-itinerary-panel {{
+                margin-top: 12px;
+                padding: 10px 12px;
+                background: #f8fafc;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                font-size: 10pt;
+                color: #111827;
+            }}
+            .trip-itinerary-title {{
+                font-weight: 700;
+                margin-bottom: 6px;
+                font-size: 11pt;
+            }}
+            .trip-itinerary-list {{
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }}
+            .trip-itinerary-row {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 6px;
+                padding: 6px 8px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+            }}
+            .trip-itinerary-day {{
+                font-weight: 600;
+                color: #111827;
+                margin-right: 8px;
+            }}
+            .trip-itinerary-label {{
+                color: #374151;
+                flex: 1;
+                text-align: right;
+            }}
+            .trip-itinerary-more {{
+                justify-content: center;
+                font-weight: 600;
+                color: #1f2937;
+                background: #f3f4f6;
+            }}
         </style>
         <section class="trip-route-section">
             <header class="trip-route-header">
@@ -1217,6 +1307,7 @@ def _render_map_route_card(
                 {f'<div class="trip-route-place-names">{place_names_line}</div>' if place_names_line else ''}
             </header>
             {figure_html}
+            {itinerary_html}
             {legend_html}
         </section>
     </div>
@@ -1316,51 +1407,11 @@ def _render_trip_summary_card(
             return ""
         return f"{hours:.1f} h"
 
-    day_rows = ""
-    max_days_screen = 4
-    max_days_print = 1
-    max_days = max_days_screen if mode == "web" else max_days_print
-    if itinerary_days:
-        rows: List[str] = []
-        for idx, day in enumerate(itinerary_days):
-            if idx >= max_days:
-                break
-            date_txt = fmt_date(getattr(day, "date_iso", "") or "")
-            locations = getattr(day, "locations", None) or []
-            segments_count = len(getattr(day, "stops", []) or [])
-            distance_txt = fmt_distance(getattr(day, "segments_total_distance_km", None))
-            hours_txt = fmt_hours(getattr(day, "segments_total_duration_hours", None))
-            stats_parts = [
-                f"{getattr(day, 'photos_count', 0)} photos",
-                f"{segments_count} segments",
-            ]
-            if distance_txt:
-                stats_parts.append(distance_txt)
-            if hours_txt:
-                stats_parts.append(hours_txt)
-            stats_line = " • ".join(stats_parts)
-            location_labels: List[str] = []
-            if locations:
-                for loc in locations:
-                    label = getattr(loc, "location_short", None) or getattr(
-                        loc, "location_full", None
-                    )
-                    if label:
-                        location_labels.append(label)
-            location_line = " • ".join(location_labels)
-            row_body = " • ".join([part for part in [location_line, stats_line] if part])
-            rows.append(
-                f"""
-                <div class="trip-summary-day-row">
-                    <span class="trip-summary-day-title">Day {getattr(day, 'day_index', '')} — {date_txt}</span>
-                    {f'<span class="trip-summary-day-meta">{row_body}</span>' if row_body else ''}
-                </div>
-                """
-            )
-        extra_count = max(0, len(itinerary_days) - max_days)
-        if extra_count > 0:
-            rows.append(f'<div class="trip-summary-day-row trip-summary-days-more">+ {extra_count} more days</div>')
-        day_rows = f'<div class="trip-summary-days">{"".join(rows)}</div>'
+    day_rows = ""  # deprecated placeholder (kept for minimal diff)
+    itinerary_line = ""
+    total_days = len(itinerary_days)
+    if total_days > 0:
+        itinerary_line = f'<div class="trip-summary-itinerary">Itinerary: {total_days} day{"s" if total_days != 1 else ""} • see route page</div>'
 
     spec = getattr(layout, "photobook_spec_v1", {}) or {}
     highlight_items = spec.get("trip_highlights") or []
@@ -1525,6 +1576,11 @@ def _render_trip_summary_card(
                 font-weight: 600;
                 color: #111827;
             }}
+            .trip-summary-itinerary {{
+                margin-top: 10px;
+                font-size: 10pt;
+                color: #1f2937;
+            }}
             .trip-highlights {{
                 margin-top: 12px;
                 break-inside: avoid;
@@ -1597,7 +1653,7 @@ def _render_trip_summary_card(
             </div>
             ''' if notable_places else ''}
             {(_render_place_highlight_cards(place_candidates, mode=mode, media_root=media_root, media_base_url=media_base_url) if place_candidates else '')}
-            {day_rows}
+            {itinerary_line}
         </section>
     </div>
     """
