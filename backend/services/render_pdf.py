@@ -4,8 +4,11 @@ PDF rendering service.
 Renders the book layouts to a print-ready PDF file.
 Uses HTML/CSS rendering via WeasyPrint for flexibility.
 """
+import base64
 import os
 import logging
+import math
+from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Iterable
 from domain.models import Asset, AssetStatus, AssetType, Book, LayoutRect, PageLayout, PageType, RenderContext, Theme
@@ -25,6 +28,161 @@ from services.manifest import build_manifest
 from services.timeline import build_days_and_events
 from services.face_crop import compute_face_focus
 logger = logging.getLogger(__name__)
+
+DAY_HEX_PALETTE = [
+    "#f97316",
+    "#14b8a6",
+    "#6366f1",
+    "#f59e0b",
+    "#10b981",
+    "#3b82f6",
+    "#a855f7",
+    "#ef4444",
+]
+PACIFICO_FONT_PATH = Path(__file__).resolve().parents[1] / "vendor" / "postcard_renderer" / "assets" / "fonts" / "Pacifico-Regular.ttf"
+
+
+def _blend_with_white(hex_color: str, alpha: float = 0.7) -> str:
+    """Blend a hex color with white (alpha towards white)."""
+    hex_color = hex_color.strip()
+    if hex_color.startswith("#"):
+        hex_color = hex_color[1:]
+    if len(hex_color) == 3:
+        hex_color = "".join([c * 2 for c in hex_color])
+    try:
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+    except Exception:
+        return "#ffffff"
+    r_blend = int(r + (255 - r) * alpha)
+    g_blend = int(g + (255 - g) * alpha)
+    b_blend = int(b + (255 - b) * alpha)
+    return f"#{r_blend:02x}{g_blend:02x}{b_blend:02x}"
+
+
+def _pacifico_font_src() -> str:
+    """Return a data URL for Pacifico font with filesystem fallback."""
+    try:
+        data = PACIFICO_FONT_PATH.read_bytes()
+        encoded = base64.b64encode(data).decode("ascii")
+        return f"url('data:font/ttf;base64,{encoded}') format('truetype')"
+    except Exception:
+        return "url('vendor/postcard_renderer/assets/fonts/Pacifico-Regular.ttf') format('truetype')"
+
+
+def _day_css_vars(palette: List[str]) -> str:
+    """Build CSS variable declarations for day colors and lighter dots."""
+    parts: List[str] = []
+    for idx, color in enumerate(palette, start=1):
+        dot = _blend_with_white(color, 0.45)
+        parts.append(f"--day-{idx}: {color}; --day-{idx}-dot: {dot};")
+    return "\n                ".join(parts)
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return distance in meters between two lat/lon points."""
+    r = 6371000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
+
+
+def _attach_stop_days(stops: List[dict], itinerary_days: List[Any], assets: Iterable[Asset], radius_m: float = 750.0) -> List[dict]:
+    """Ensure each stop has a day_index/day_number based on nearby photos per day."""
+    if not stops:
+        return []
+
+    day_dates: Dict[int, date] = {}
+    for day in itinerary_days or []:
+        idx_raw = getattr(day, "day_index", None)
+        try:
+            idx = int(idx_raw) - 1 if idx_raw is not None else None
+        except Exception:
+            idx = None
+        date_str = getattr(day, "date_iso", None)
+        try:
+            dt = datetime.fromisoformat(date_str) if date_str else None
+        except Exception:
+            dt = None
+        if idx is None:
+            continue
+        day_dates[idx] = dt.date() if isinstance(dt, datetime) else None
+
+    asset_points: List[tuple[float, float, int]] = []
+    for a in assets or []:
+        if not a or not a.metadata:
+            continue
+        lat = a.metadata.gps_lat
+        lon = a.metadata.gps_lon
+        if lat is None or lon is None:
+            continue
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+            continue
+        taken_at = a.metadata.taken_at
+        day_idx = None
+        if taken_at and day_dates:
+            t_date = taken_at.date()
+            for idx, d in day_dates.items():
+                if d and d == t_date:
+                    day_idx = idx
+                    break
+        if day_idx is None:
+            day_idx = 0
+        asset_points.append((lat, lon, day_idx))
+
+    total_days = max(len(itinerary_days), 1)
+    enriched: List[dict] = []
+    for idx, stop in enumerate(stops, start=1):
+        sd = dict(stop)
+        day_idx = None
+        if isinstance(sd.get("day_index"), int):
+            day_idx = sd.get("day_index")
+        elif isinstance(sd.get("day_indices"), list) and sd.get("day_indices"):
+            try:
+                day_idx = int(sd.get("day_indices")[0])
+            except Exception:
+                day_idx = None
+        elif isinstance(sd.get("day_number"), int):
+            day_idx = (sd.get("day_number") or 1) - 1
+
+        # If still missing, infer from nearby assets
+        if day_idx is None and asset_points:
+            counts: Dict[int, int] = {}
+            distance_acc: Dict[int, float] = {}
+            s_lat = sd.get("lat")
+            s_lon = sd.get("lon") if sd.get("lon") is not None else sd.get("lng")
+            if s_lat is not None and s_lon is not None:
+                try:
+                    s_lat = float(s_lat)
+                    s_lon = float(s_lon)
+                    for a_lat, a_lon, a_day in asset_points:
+                        dist = _haversine_m(s_lat, s_lon, a_lat, a_lon)
+                        if dist <= radius_m:
+                            counts[a_day] = counts.get(a_day, 0) + 1
+                            distance_acc[a_day] = distance_acc.get(a_day, 0.0) + dist
+                    if counts:
+                        # Pick highest count, tie-break by smallest avg distance
+                        best = sorted(
+                            counts.items(),
+                            key=lambda kv: (-kv[1], distance_acc.get(kv[0], 0.0) / max(kv[1], 1)),
+                        )[0][0]
+                        day_idx = best
+                except Exception:
+                    day_idx = None
+
+        if day_idx is None:
+            # Stable fallback hash on label/coords
+            key = f"{sd.get('label')}-{sd.get('lat')}-{sd.get('lon')}"
+            day_idx = hash(key) % total_days
+
+        sd["day_index"] = max(0, int(day_idx))
+        sd.setdefault("day_number", sd["day_index"] + 1)
+        enriched.append(sd)
+    return enriched
 
 
 def get_pdf_layout_variant(page: Any, photo_count: int) -> str:
@@ -1070,12 +1228,24 @@ def _render_map_route_card(
     place_markers = _build_trip_place_markers(getattr(layout, "place_candidates", None) or [])
     all_markers = trip_markers + place_markers
     route_points = _points_from_segments(segments)
+    stops_spec: List[dict] = []
+    if isinstance(getattr(layout, "photobook_spec_v1", None), dict):
+        spec_dict = getattr(layout, "photobook_spec_v1") or {}
+        stops_spec = spec_dict.get("stops_for_legend") or []
+    itinerary_days = getattr(layout, "itinerary_days", None) or []
+    stops_for_display: List[dict] = _attach_stop_days(list(stops_spec), itinerary_days, assets.values())
     if layout.book_id and route_points:
+        stops_drawn: List[dict] = []
         trip_rel_path, trip_abs_path = map_route_renderer.render_trip_route_map(
             layout.book_id,
             route_points,
             markers=all_markers,
+            stops_for_legend=stops_for_display or None,
+            stops_drawn_out=stops_drawn,
+            right_safe_frac=0.35,
         )
+        if stops_drawn:
+            stops_for_display = _attach_stop_days(stops_drawn, itinerary_days, assets.values())
         if trip_rel_path or trip_abs_path:
             if mode == "pdf":
                 image_src = trip_abs_path or image_src
@@ -1092,85 +1262,113 @@ def _render_map_route_card(
 
     # Build place names text for trip route
     place_names_line = _build_trip_place_names(getattr(layout, "place_candidates", None) or [])
-    spec = getattr(layout, "photobook_spec_v1", {}) or {}
-    stops = spec.get("stops_for_legend") or []
+    stops = stops_for_display
 
+    itinerary_days = getattr(layout, "itinerary_days", None) or []
+    itinerary_rows_html = ""
+
+    def _day_palette() -> List[str]:
+        return DAY_HEX_PALETTE
+
+    if itinerary_days:
+        palette = _day_palette()
+        legend_rows: List[str] = []
+        max_pills = 12
+        for idx, _day in enumerate(itinerary_days, start=1):
+            if idx > max_pills:
+                break
+            color = palette[(idx - 1) % len(palette)]
+            soft = _blend_with_white(color, 0.55)
+            legend_rows.append(
+                f'<span class="trip-route-day-pill" style="--day-color:var(--day-{idx}, {color}); --day-color-soft:var(--day-{idx}-dot, {soft});"><span class="trip-route-day-dot"></span><span class="trip-route-day-label">Day&nbsp;{idx}</span></span>'
+            )
+        remaining_days = max(0, len(itinerary_days) - max_pills)
+        if remaining_days > 0:
+            legend_rows.append(
+                f'<span class="trip-route-day-pill trip-day-legend-more"><span class="trip-route-day-label">+{remaining_days}</span></span>'
+            )
+        itinerary_rows_html = "".join(legend_rows)
+
+    legend_block_html = ""
+    stops_display = list(stops or [])
+    remaining_stops = 0
+    MAX_STOPS_DISPLAY = 6
+    if len(stops_display) > MAX_STOPS_DISPLAY:
+        remaining_stops = len(stops_display) - MAX_STOPS_DISPLAY
+        stops_display = stops_display[:MAX_STOPS_DISPLAY]
+    if stops_display:
+        palette = DAY_HEX_PALETTE
+        legend_rows = []
+        for idx, stop in enumerate(stops_display, start=1):
+            label = stop.get("label") or "Stop"
+            count = stop.get("photo_count")
+            count_text = f"{count} photos" if count is not None else ""
+            count_html = f'<span class="map-legend-count">{count_text}</span>' if count_text else ""
+            day_idx = 0
+            if isinstance(stop.get("day_index"), int):
+                day_idx = max(0, int(stop.get("day_index")))
+            elif isinstance(stop.get("day_indices"), list) and stop.get("day_indices"):
+                try:
+                    day_idx = max(0, int(stop.get("day_indices")[0]))
+                except Exception:
+                    day_idx = 0
+            elif isinstance(stop.get("day_number"), int):
+                day_idx = max(0, (stop.get("day_number") or 1) - 1)
+            stop_color = palette[day_idx % len(palette)]
+            legend_rows.append(
+                f'<div class="map-legend-row">'
+                f'<span class="map-legend-badge" data-day="{day_idx+1}" style="--stop-color:var(--day-{day_idx+1}, {stop_color});">{idx}</span>'
+                f'<div class="map-legend-body">'
+                f'<span class="map-legend-label">{label}</span>'
+                f"{count_html}"
+                f"</div>"
+                f"</div>"
+            )
+        if remaining_stops > 0:
+            legend_rows.append(
+                f'<div class="map-legend-row map-legend-more">+{remaining_stops} more stops</div>'
+            )
+        legend_block_html = f"""
+            <div class="map-route-legend">
+                <div class="map-legend-title">Stops</div>
+                {''.join(legend_rows)}
+            </div>
+        """
+
+    overlay_html = f"""
+    <div class="trip-route-overlay">
+        <div class="trip-route-overlay-title">Trip Itinerary</div>
+        {legend_block_html or ''}
+    </div>
+    """
+
+    map_height_mm = max(height_mm - 10, height_mm * 0.94)
     figure_html = ""
     if image_src:
         figure_html = f"""
-            <div class="trip-route-map-frame">
-                <img class="trip-route-map-image" src="{image_src}" alt="Trip route map" />
+            <div class="trip-route-map-wrap" style="height: {map_height_mm:.1f}mm;">
+                <div class="map-route-canvas" style="background-image: url('{image_src}');">
+                    {overlay_html}
+                    {f'<div class="trip-route-day-legend">{itinerary_rows_html}</div>' if itinerary_rows_html else ''}
+                </div>
             </div>
         """
     else:
-        figure_html = """
-            <div class="map-route-placeholder">Route image unavailable</div>
-        """
-
-    legend_html = ""
-    if stops:
-        legend_rows = []
-        for stop in stops:
-            label = stop.get("label") or "Stop"
-            count = stop.get("photo_count")
-            count_text = f" — {count} photos" if count is not None else ""
-            legend_rows.append(
-                f'<div class="map-legend-row"><span class="map-legend-label">{label}</span><span class="map-legend-count">{count_text}</span></div>'
-            )
-        legend_html = f"""
-        <div class="map-route-legend">
-            <div class="map-legend-title">Stops</div>
-            {''.join(legend_rows)}
-        </div>
-        """
-
-    itinerary_html = ""
-    itinerary_days = getattr(layout, "itinerary_days", None) or []
-
-    def fmt_date(date_iso: str) -> str:
-        if not date_iso:
-            return ""
-        try:
-            from datetime import datetime
-
-            dt = datetime.fromisoformat(date_iso)
-            return dt.strftime("%B %d, %Y")
-        except Exception:
-            return str(date_iso)
-
-    def location_for_day(day: Any) -> str:
-        label = getattr(day, "location_short", None) or getattr(day, "location_full", None)
-        if label:
-            return label
-        locations = getattr(day, "locations", None) or []
-        for loc in locations:
-            loc_label = getattr(loc, "location_short", None) or getattr(loc, "location_full", None)
-            if loc_label:
-                return loc_label
-        return fmt_date(getattr(day, "date_iso", "") or "")
-
-    if itinerary_days:
-        rows: List[str] = []
-        for idx, day in enumerate(itinerary_days, start=1):
-            label = location_for_day(day) or fmt_date(getattr(day, "date_iso", "") or "")
-            rows.append(
-                f'<div class="trip-itinerary-row"><span class="trip-itinerary-day">Day {idx}</span><span class="trip-itinerary-label">{label}</span></div>'
-            )
-        visible_rows = rows[:5]
-        remaining = len(rows) - len(visible_rows)
-        if remaining > 0:
-            visible_rows.append(f'<div class="trip-itinerary-row trip-itinerary-more">+{remaining} more days</div>')
-        itinerary_html = f"""
-        <div class="trip-itinerary-panel">
-            <div class="trip-itinerary-title">Trip Itinerary</div>
-            <div class="trip-itinerary-list">
-                {''.join(visible_rows)}
+        figure_html = f"""
+            <div class="trip-route-map-wrap" style="height: {map_height_mm:.1f}mm;">
+                <div class="map-route-canvas map-route-placeholder">
+                    <div class="map-route-placeholder-text">Route image unavailable</div>
+                    {overlay_html}
+                    {f'<div class="trip-route-day-legend">{itinerary_rows_html}</div>' if itinerary_rows_html else ''}
+                </div>
             </div>
-        </div>
         """
+
+    pacifico_src = _pacifico_font_src()
+    day_vars_css = _day_css_vars(DAY_HEX_PALETTE)
 
     return f"""
-    <div class="page map-route-page" style="
+    <div class="page page-map-route map-route-page" style="
         position: relative;
         width: {width_mm}mm;
         height: {height_mm}mm;
@@ -1180,6 +1378,28 @@ def _render_map_route_card(
         page-break-after: always;
     ">
         <style>
+            @font-face {{
+                font-family: 'Pacifico';
+                src: {pacifico_src};
+                font-weight: normal;
+                font-style: normal;
+            }}
+            .page-map-route {{
+                --page-bg: {bg_color};
+                --ink: #0f172a;
+                --muted: #4b5563;
+                --card-bg: rgba(255,255,255,0.94);
+                --card-border: #d1d5db;
+                --radius: 10px;
+                --shadow: 0 10px 20px rgba(0,0,0,0.18);
+                --gap: 10px;
+                --pad: 10px;
+                --map-frame: #111827;
+                --trip-route-overlay-width: 32%;
+                --trip-route-overlay-pad: 10px;
+                --trip-route-right-safe-frac: 0.35;
+{day_vars_css if day_vars_css else ""}
+            }}
             .map-route-page {{
                 display: flex;
                 flex-direction: column;
@@ -1187,60 +1407,119 @@ def _render_map_route_card(
                 justify-content: flex-start;
             }}
             .trip-route-section {{
-                width: 88%;
-                max-width: 190mm;
-                margin: 16mm auto;
+                width: 94%;
+                max-width: 195mm;
+                margin: 6mm auto 6mm auto;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }}
-            .trip-route-header {{
-                margin-bottom: 12px;
-            }}
-            .trip-route-title {{
-                font-family: {theme.title_font_family};
-                font-size: 22pt;
-                margin: 0;
-            }}
-            .trip-route-stats {{
-                font-size: 11pt;
-                color: #374151;
+            .trip-route-map-wrap {{
+                position: relative;
                 margin-top: 4px;
-            }}
-            .trip-route-stats span + span {{
-                margin-left: 6px;
-            }}
-            .trip-route-place-names {{
-                font-size: 10pt;
-                color: {theme.secondary_color};
-                margin-top: 8px;
-                line-height: 1.4;
-            }}
-            .trip-route-map-frame {{
-                margin-top: 14px;
-                border-radius: 8px;
+                border-radius: var(--radius);
                 overflow: hidden;
                 box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+                background: #0b1628;
             }}
             .trip-route-map-image {{
                 width: 100%;
-                height: auto;
+                height: 100%;
                 display: block;
+                object-fit: cover;
             }}
             .map-route-placeholder {{
-                width: 100%;
-                padding: 30mm 10mm;
                 background: #e2e8f0;
                 color: #475569;
-                border-radius: 8px;
                 border: 1px dashed #cbd5e1;
                 font-size: 12pt;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }}
+            .map-route-placeholder-text {{ padding: 8mm; }}
+            .trip-route-overlay {{
+                position: absolute;
+                right: var(--trip-route-overlay-pad);
+                top: 50%;
+                transform: translateY(-50%);
+                width: var(--trip-route-overlay-width);
+                max-height: calc(100% - 2 * var(--trip-route-overlay-pad));
+                background: var(--card-bg);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius);
+                padding: var(--trip-route-overlay-pad);
+                box-shadow: var(--shadow);
+                overflow: hidden;
+                z-index: 3;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }}
+            .trip-day-strip {{
+                position: absolute;
+                left: 50%;
+                bottom: 6px;
+                transform: translateX(-50%);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                padding: 6px 10px;
+                background: rgba(255,255,255,0.86);
+                border-radius: 9999px;
+                box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+                font-size: 10pt;
+                page-break-inside: avoid;
+            }}
+            .trip-route-overlay-title {{
+                font-weight: 700;
+                margin-bottom: 4px;
+                font-size: 13pt;
+                font-family: 'Pacifico', cursive;
+                color: var(--ink);
+            }}
+            .trip-itinerary-list {{
+                display: block;
+                width: 100%;
+                margin-bottom: 6px;
+                max-height: 50%;
+                overflow: hidden;
+            }}
+            .trip-day-legend-item {{
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 10pt;
+                padding: 2px 0;
+                color: #111827;
+            }}
+            .trip-day-dot {{
+                width: 12px;
+                height: 12px;
+                border-radius: 9999px;
+                display: inline-block;
+                flex-shrink: 0;
+            }}
+            .trip-day-label {{
+                font-weight: 600;
+            }}
+            .trip-itinerary-more {{
+                text-align: center;
+                font-weight: 600;
+                color: #1f2937;
+                background: #f3f4f6;
             }}
             .map-route-legend {{
-                margin-top: 12px;
                 width: 100%;
-                max-width: 190mm;
-                font-size: 10pt;
+                font-size: 9.5pt;
                 color: #1f2937;
                 border-top: 1px solid #e5e7eb;
-                padding-top: 8px;
+                padding-top: 6px;
+                margin-top: 4px;
+                page-break-inside: avoid;
+                max-height: 40%;
+                overflow: hidden;
             }}
             .map-legend-title {{
                 font-weight: 600;
@@ -1248,67 +1527,129 @@ def _render_map_route_card(
             }}
             .map-legend-row {{
                 display: flex;
-                justify-content: space-between;
+                align-items: center;
+                gap: 8px;
                 padding: 2px 0;
+            }}
+            .map-legend-badge {{
+                width: 24px;
+                height: 24px;
+                border-radius: 9999px;
+                background: var(--stop-color, #f26c2a);
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 12pt;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border: none;
+                box-shadow: none;
+                flex-shrink: 0;
+            }}
+            .map-legend-body {{
+                flex: 1;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                min-width: 0;
+            }}
+            .map-legend-label {{
+                font-weight: 600;
+                color: #111827;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }}
             .map-legend-count {{
                 color: #4b5563;
+                font-size: 9pt;
+                white-space: nowrap;
             }}
-            .trip-itinerary-panel {{
-                margin-top: 12px;
-                padding: 10px 12px;
-                background: #f8fafc;
-                border: 1px solid #e5e7eb;
-                border-radius: 8px;
-                font-size: 10pt;
-                color: #111827;
-            }}
-            .trip-itinerary-title {{
-                font-weight: 700;
-                margin-bottom: 6px;
-                font-size: 11pt;
-            }}
-            .trip-itinerary-list {{
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-            }}
-            .trip-itinerary-row {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                background: #ffffff;
-                border: 1px solid #e5e7eb;
-                border-radius: 6px;
-                padding: 6px 8px;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-            }}
-            .trip-itinerary-day {{
+            .map-legend-more {{
                 font-weight: 600;
                 color: #111827;
-                margin-right: 8px;
             }}
-            .trip-itinerary-label {{
-                color: #374151;
-                flex: 1;
-                text-align: right;
+            .map-route-canvas {{
+                position: relative;
+                width: 100%;
+                height: 100%;
+                background-size: cover;
+                background-position: center;
+                background-repeat: no-repeat;
+                border-radius: var(--radius);
+                overflow: hidden;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }}
-            .trip-itinerary-more {{
+            .trip-route-day-legend {{
+                position: absolute;
+                left: 50%;
+                transform: translateX(-50%);
+                bottom: 10px;
+                display: flex;
+                flex-wrap: nowrap;
                 justify-content: center;
-                font-weight: 600;
-                color: #1f2937;
-                background: #f3f4f6;
+                align-items: center;
+                gap: 8px;
+                white-space: nowrap;
+                padding: 0;
+                border: none;
+                background: transparent;
+                box-shadow: none;
+                max-width: 96%;
+                overflow: visible;
+                text-align: center;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }}
+            .trip-route-day-pill {{
+                display: inline-block;
+                background: var(--day-color, #f97316);
+                color: #ffffff;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 10.5pt;
+                line-height: 1.1;
+                margin: 2px 4px;
+                white-space: nowrap;
+                vertical-align: middle;
+                border: 1px solid rgba(255,255,255,0.14);
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }}
+            .trip-route-day-dot {{
+                display: inline-block;
+                width: 11px;
+                height: 11px;
+                border-radius: 999px;
+                background: var(--day-color-soft, var(--day-color, #f26c2a));
+                margin-right: 6px;
+                vertical-align: middle;
+            }}
+            .trip-route-day-label {{
+                vertical-align: middle;
+                font-weight: 700;
+                color: #ffffff;
+            }}
+            .trip-day-legend-more {{
+                background: rgba(255,255,255,0.25);
+                color: #ffffff;
+                border: 1px solid rgba(255,255,255,0.18);
+            }}
+            .trip-route-map-wrap {{
+                position: relative;
+                border-radius: var(--radius);
+                overflow: hidden;
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+                background: #0b1628;
+                break-inside: avoid;
+                page-break-inside: avoid;
             }}
         </style>
         <section class="trip-route-section">
-            <header class="trip-route-header">
-                <h1 class="trip-route-title">{title}</h1>
-                {f'<div class="trip-route-stats"><span>{stats_line}</span></div>' if stats_line else ''}
-                {f'<div class="trip-route-place-names">{place_names_line}</div>' if place_names_line else ''}
-            </header>
             {figure_html}
-            {itinerary_html}
-            {legend_html}
         </section>
     </div>
     """

@@ -259,7 +259,12 @@ def plan_book(
 
     if should_use_map and gps_photo_count > 0 and route_points:
         try:
-            route_image_rel, route_image_abs = render_route_map(book_id, route_points)
+            route_image_rel, route_image_abs = render_route_map(
+                book_id,
+                route_points,
+                right_safe_frac=0.35,
+                stops_for_legend=spec_meta.get("stops_for_legend") if isinstance(spec_meta, dict) else None,
+            )
             map_route_page = Page(
                 index=3,
                 page_type=PageType.MAP_ROUTE,

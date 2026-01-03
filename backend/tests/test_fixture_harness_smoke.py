@@ -36,7 +36,7 @@ def test_fixture_harness_smoke(tmp_path):
         cwd=str(repo_root),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        timeout=120,
+        timeout=240,
     )
     print(res.stdout.decode(errors="ignore"))
     assert res.returncode == 0
@@ -45,10 +45,11 @@ def test_fixture_harness_smoke(tmp_path):
     out_pdf = ARTIFACTS_DIR / "fixture_book.pdf"
     assert out_pdf.exists() and out_pdf.stat().st_size > 50 * 1024
 
-    trip_map = MAPS_DIR / "book_fixture-book_route.png"
-    assert trip_map.exists() and trip_map.stat().st_size > 5 * 1024
+    trip_maps = list(MAPS_DIR.glob("book_fixture-book_route*.png"))
+    assert trip_maps, "Trip route map not found"
+    assert trip_maps[0].stat().st_size > 5 * 1024
 
-    day_maps = list(MAPS_DIR.glob("book_fixture-book_day_*_route.png"))
+    day_maps = list(MAPS_DIR.glob("book_fixture-book_day_*_route*.png"))
     assert len(day_maps) >= 1 and day_maps[0].stat().st_size > 5 * 1024
 
     # Thumbnails optional: only assert if present

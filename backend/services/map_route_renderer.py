@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 import json
+import hashlib
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
@@ -85,6 +86,27 @@ MARKER_OUTLINE_WIDTH_PLACE = 3
 PLACE_MARKER_FILL = (255, 235, 59, 255)  # yellow
 PLACE_MARKER_OUTLINE = (0, 0, 0, 255)  # black
 
+STOP_BADGE_RADIUS = 18
+STOP_BADGE_OUTLINE = None  # no stroke
+STOP_BADGE_FILL = (242, 108, 42, 255)  # orange
+STOP_BADGE_TEXT = (255, 255, 255, 255)
+STOP_BADGE_FONT_SIZE = 20
+STOP_BADGE_OUTLINE_WIDTH = 0
+SAFE_BOX_BIAS = 0.65  # prefer cluster centered at 65% of safe box width
+
+
+def _day_palette() -> list[tuple[int, int, int, int]]:
+    return [
+        (249, 115, 22, 255),   # orange
+        (20, 184, 166, 255),   # teal
+        (99, 102, 241, 255),   # indigo
+        (245, 158, 11, 255),   # amber
+        (16, 185, 129, 255),   # green
+        (59, 130, 246, 255),   # blue
+        (168, 85, 247, 255),   # purple
+        (239, 68, 68, 255),    # red
+    ]
+
 _CANONICAL_CACHE: dict[str, "CanonicalRoute"] = {}
 
 
@@ -100,6 +122,9 @@ def render_route_map(
     book_id: str,
     points: List[Tuple[float, float]],
     markers: Optional[List[RouteMarker]] = None,
+    stops_for_legend: Optional[Sequence[dict]] = None,
+    stops_drawn_out: Optional[List[dict]] = None,
+    right_safe_frac: float = 0.0,
 ) -> Tuple[str, str]:
     """
     Render a static PNG map for the given route points.
@@ -125,6 +150,9 @@ def render_route_map(
         book_id,
         canonical.points,
         markers=markers,
+        stops_for_legend=stops_for_legend,
+        stops_drawn_out=stops_drawn_out,
+        right_safe_frac=right_safe_frac,
         width=1600,
         height=1000,
         filename_prefix="route",
@@ -136,11 +164,21 @@ def render_trip_route_map(
     book_id: str,
     points: List[Tuple[float, float]],
     markers: Optional[List[RouteMarker]] = None,
+    stops_for_legend: Optional[Sequence[dict]] = None,
+    stops_drawn_out: Optional[List[dict]] = None,
+    right_safe_frac: float = 0.0,
 ) -> Tuple[str, str]:
     """
     Render a static PNG map for the given route points (trip-wide helper).
     """
-    return render_route_map(book_id, points, markers=markers)
+    return render_route_map(
+        book_id,
+        points,
+        markers=markers,
+        stops_for_legend=stops_for_legend,
+        stops_drawn_out=stops_drawn_out,
+        right_safe_frac=right_safe_frac,
+    )
 
 
 def render_day_route_image(
@@ -493,6 +531,9 @@ def _render_route_image(
     height: int,
     filename_prefix: str = "route",
     markers: Optional[List[RouteMarker]] = None,
+    stops_for_legend: Optional[Sequence[dict]] = None,
+    stops_drawn_out: Optional[List[dict]] = None,
+    right_safe_frac: float = 0.0,
     preprocessed: bool = False,
     bbox_override: Optional[dict] = None,
     start_end_override: Optional[Tuple[int, int]] = None,
@@ -503,7 +544,7 @@ def _render_route_image(
     if len(points) < 2:
         return "", ""
 
-    print(f"[MAP] Starting render for book {book_id}: {len(points)} raw points")
+    print(f"[MAP] Starting render for book {book_id}: {len(points)} raw points right_safe_frac={right_safe_frac}")
 
     # Preserve original ordering
     indexed_points = [(idx, lat, lon) for idx, (lat, lon) in enumerate(points)]
@@ -557,24 +598,12 @@ def _render_route_image(
             print(f"[MAP] Using preprocessed route with {len(simplified_points)} points")
 
         bbox = bbox_override if bbox_override else _compute_bbox(simplified_points)
-        target_aspect = max((width - 2 * max(70, ROUTE_CANVAS_PADDING_PX)) / max(height - 2 * max(70, ROUTE_CANVAS_PADDING_PX), 1), 1e-3)
-        span_lat = bbox.get("span_lat", bbox["max_lat"] - bbox["min_lat"])
-        span_lon = bbox.get("span_lon", bbox["max_lon"] - bbox["min_lon"])
-        min_lat_n, max_lat_n, min_lon_n, max_lon_n = _normalize_bbox_aspect(
-            bbox["min_lat"], bbox["max_lat"], bbox["min_lon"], bbox["max_lon"], target_aspect
-        )
-        span_lat_n = max_lat_n - min_lat_n
-        span_lon_n = max_lon_n - min_lon_n
-        bbox.update(
-            {
-                "min_lat": min_lat_n,
-                "max_lat": max_lat_n,
-                "min_lon": min_lon_n,
-                "max_lon": max_lon_n,
-                "span_lat": span_lat_n,
-                "span_lon": span_lon_n,
-            }
-        )
+        margin_px = max(70, ROUTE_CANVAS_PADDING_PX)
+        safe_frac_effective = max(0.0, min(0.9, right_safe_frac + 0.05))
+        drawable_w = (width - 2 * margin_px) * (1.0 - safe_frac_effective)
+        drawable_h = max(height - 2 * margin_px, 1)
+        target_aspect = max(drawable_w / drawable_h, 1e-3)
+        bbox = _expand_bbox_to_aspect(bbox, target_aspect)
         print(
             f"[MAP] BBox lat({bbox['min_lat']:.4f},{bbox['max_lat']:.4f}) "
             f"lon({bbox['min_lon']:.4f},{bbox['max_lon']:.4f}) "
@@ -582,14 +611,19 @@ def _render_route_image(
         )
 
         draw_width, draw_height = width * UPSCALE_FACTOR, height * UPSCALE_FACTOR
-        margin_px = max(70, ROUTE_CANVAS_PADDING_PX)
         if MAP_TILES_ENABLED and MAP_TILE_URL_TEMPLATE:
             tiles_layout = _compute_tile_layout(bbox, draw_width, draw_height)
         if tiles_layout:
             coords = _map_points_to_tile_pixels(simplified_points, tiles_layout)
         else:
             coords = _map_points_to_canvas(
-                simplified_points, width, height, margin_px=margin_px, shrink_factor=0.9, bbox=bbox
+                simplified_points,
+                width,
+                height,
+                margin_px=margin_px,
+                shrink_factor=0.9,
+                right_safe_frac=right_safe_frac,
+                bbox=bbox,
             )
 
         print(
@@ -609,6 +643,9 @@ def _render_route_image(
         end_color = (244, 114, 182, 255)  # coral/pink
         marker_outline = (255, 255, 255, 60)
         marker_coords_scaled: List[Tuple[float, float]] = []
+        stop_coords_scaled: List[Tuple[float, float]] = []
+        stop_candidates: List[dict] = []
+        stop_colors: List[tuple[int, int, int, int]] = []
         if markers:
             marker_points = [(marker.lat, marker.lon) for marker in markers]
             if tiles_layout:
@@ -620,6 +657,7 @@ def _render_route_image(
                     height,
                     margin_px=margin_px,
                     shrink_factor=0.9,
+                    right_safe_frac=right_safe_frac,
                     bbox=bbox,
                 )
             marker_coords_scaled = (
@@ -627,6 +665,53 @@ def _render_route_image(
                 if tiles_layout
                 else [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in marker_coords]
             )
+        if stops_for_legend:
+            stop_points: List[Tuple[float, float]] = []
+            palette = _day_palette()
+            for stop in stops_for_legend:
+                if not isinstance(stop, dict):
+                    continue
+                lat = stop.get("lat")
+                lon = stop.get("lon")
+                if lon is None and "lng" in stop:
+                    lon = stop.get("lng")
+                if lat is None or lon is None:
+                    continue
+                try:
+                    pt = (float(lat), float(lon))
+                    stop_points.append(pt)
+                    stop_candidates.append(stop)
+                    day_idx = 0
+                    if isinstance(stop.get("day_index"), int):
+                        day_idx = max(0, int(stop.get("day_index")))
+                    elif isinstance(stop.get("day_indices"), list) and stop.get("day_indices"):
+                        try:
+                            day_idx = max(0, int(stop.get("day_indices")[0]))
+                        except Exception:
+                            day_idx = 0
+                    elif isinstance(stop.get("day_number"), int):
+                        day_idx = max(0, (stop.get("day_number") or 1) - 1)
+                    stop_colors.append(palette[day_idx % len(palette)])
+                except Exception:
+                    continue
+            if stop_points:
+                if tiles_layout:
+                    stop_coords = _map_points_to_tile_pixels(stop_points, tiles_layout)
+                else:
+                    stop_coords = _map_points_to_canvas(
+                        stop_points,
+                        width,
+                        height,
+                        margin_px=margin_px,
+                        shrink_factor=0.9,
+                        right_safe_frac=right_safe_frac,
+                        bbox=bbox,
+                    )
+                stop_coords_scaled = (
+                    stop_coords
+                    if tiles_layout
+                    else [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in stop_coords]
+                )
         smoothed_coords = _smooth_polyline(
             coords,
             min_total_points=250,
@@ -639,6 +724,47 @@ def _render_route_image(
         else:
             coords_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in coords]
             smoothed_scaled = [(x * UPSCALE_FACTOR, y * UPSCALE_FACTOR) for x, y in smoothed_coords]
+
+        # Bias the route away from the overlay by shifting within the safe box.
+        safe_w_px = (width - 2 * margin_px) * (1.0 - safe_frac_effective) * UPSCALE_FACTOR
+        safe_left_px = margin_px * UPSCALE_FACTOR
+        safe_right_px = safe_left_px + safe_w_px
+        if coords_scaled:
+            xs, ys = zip(*coords_scaled)
+            cur_center_x = (min(xs) + max(xs)) / 2.0
+            desired_center_x = safe_left_px + SAFE_BOX_BIAS * safe_w_px
+            dx = desired_center_x - cur_center_x
+            # Clamp so the route stays inside the safe box
+            if min(xs) + dx < safe_left_px:
+                dx = safe_left_px - min(xs)
+            if max(xs) + dx > safe_right_px:
+                dx = safe_right_px - max(xs)
+            if abs(dx) > 0:
+                print(
+                    f"[MAP] safe_box=({safe_left_px:.1f},{safe_right_px:.1f}) applying_dx={dx:.1f} right_safe_frac={right_safe_frac}"
+                )
+                coords_scaled = [(x + dx, y) for x, y in coords_scaled]
+                smoothed_scaled = [(x + dx, y) for x, y in smoothed_scaled]
+                marker_coords_scaled = [(x + dx, y) for x, y in marker_coords_scaled]
+                stop_coords_scaled = [(x + dx, y) for x, y in stop_coords_scaled]
+                # Recompute for any further debug
+                xs, ys = zip(*coords_scaled)
+
+        def _filter_stops_in_view(
+            stops_list: List[dict],
+            coords_list: List[Tuple[float, float]],
+            canvas_w: int,
+            canvas_h: int,
+            inset_px: int,
+        ) -> Tuple[List[dict], List[Tuple[float, float]]]:
+            filtered_stops: List[dict] = []
+            filtered_coords: List[Tuple[float, float]] = []
+            for stop, (sx, sy) in zip(stops_list, coords_list):
+                if sx < inset_px or sy < inset_px or sx > canvas_w - inset_px or sy > canvas_h - inset_px:
+                    continue
+                filtered_stops.append(stop)
+                filtered_coords.append((sx, sy))
+            return filtered_stops, filtered_coords
 
         # First try tiles on a transparent base; fall back to the legacy grid if tiles fail.
         background_img = Image.new("RGBA", (draw_width, draw_height), (0, 0, 0, 0))
@@ -671,8 +797,9 @@ def _render_route_image(
             safe_left, safe_top = margin_px, margin_px
             safe_right, safe_bottom = width - margin_px, height - margin_px
             print(
-                f"[MAP] Debug bbox canvas=({width}x{height}) margin={margin_px}px "
+                f"[MAP] Debug canvas=({width}x{height}) margin={margin_px}px "
                 f"route_px=({min_x:.1f},{min_y:.1f})-({max_x:.1f},{max_y:.1f}) "
+                f"route_x_frac={((max_x/width) if width else 0.0):.3f} "
                 f"safe_box=({safe_left},{safe_top})-({safe_right},{safe_bottom}) "
                 f"points={len(coords)}"
             )
@@ -764,6 +891,46 @@ def _render_route_image(
                 marker_bbox = (mx - r_scaled, my - r_scaled, mx + r_scaled, my + r_scaled)
                 overlay_draw.ellipse(marker_bbox, fill=fill, outline=outline, width=stroke_scaled)
 
+            if stops_drawn_out is not None:
+                stops_drawn_out.clear()
+            if stop_coords_scaled:
+                badge_radius = int(STOP_BADGE_RADIUS * UPSCALE_FACTOR)
+                badge_outline = STOP_BADGE_OUTLINE
+                badge_fill = STOP_BADGE_FILL
+                badge_text = STOP_BADGE_TEXT
+                outline_width = max(0, int(STOP_BADGE_OUTLINE_WIDTH * UPSCALE_FACTOR))
+                inset = badge_radius + int(3 * UPSCALE_FACTOR)
+                stops_in_view, stop_coords_in_view = _filter_stops_in_view(
+                    stop_candidates, stop_coords_scaled, draw_width, draw_height, inset
+                )
+                stops_color_in_view: List[tuple[int, int, int, int]] = []
+                for stop in stops_in_view:
+                    try:
+                        idx = stop_candidates.index(stop)
+                        stops_color_in_view.append(stop_colors[idx] if idx < len(stop_colors) else STOP_BADGE_FILL)
+                    except Exception:
+                        stops_color_in_view.append(STOP_BADGE_FILL)
+                for idx, stop in enumerate(stops_in_view, start=1):
+                    color_dbg = stops_color_in_view[idx - 1] if idx - 1 < len(stops_color_in_view) else STOP_BADGE_FILL
+                    print(f"[MAP][stops] stop#{idx} day_idx={stop.get('day_index')} color={color_dbg}")
+                if stops_drawn_out is not None:
+                    stops_drawn_out.clear()
+                    stops_drawn_out.extend(stops_in_view)
+                try:
+                    badge_font = ImageFont.truetype("DejaVuSans-Bold.ttf", int(STOP_BADGE_FONT_SIZE * UPSCALE_FACTOR))
+                except Exception:
+                    badge_font = ImageFont.load_default()
+
+                for idx, (sx, sy) in enumerate(stop_coords_in_view, start=1):
+                    badge_fill = stops_color_in_view[idx - 1] if idx - 1 < len(stops_color_in_view) else STOP_BADGE_FILL
+                    bbox_marker = (sx - badge_radius, sy - badge_radius, sx + badge_radius, sy + badge_radius)
+                    overlay_draw.ellipse(bbox_marker, fill=badge_fill, outline=badge_outline, width=outline_width)
+                    num_text = str(idx)
+                    tw, th = _measure_text(badge_font, num_text)
+                    text_x = sx - tw / 2
+                    text_y = sy - th / 2 - 1
+                    overlay_draw.text((text_x, text_y), num_text, fill=badge_text, font=badge_font)
+
             _draw_legend(overlay_draw, draw_width, draw_height, start_color, end_color, marker_outline, scale=UPSCALE_FACTOR)
 
             frame_margin = int(6 * UPSCALE_FACTOR)
@@ -777,7 +944,18 @@ def _render_route_image(
         else:
             composed = background_img
 
-        filename = f"book_{book_id}_{filename_prefix}.png"
+        def _hash_stops(stops: Optional[Sequence[dict]]) -> str:
+            if not stops:
+                return "none"
+            try:
+                blob = json.dumps(stops, sort_keys=True, separators=(",", ":"))
+                return hashlib.md5(blob.encode("utf-8")).hexdigest()[:8]
+            except Exception:
+                return "unstable"
+
+        safe_token = int(round(max(0.0, min(0.9, right_safe_frac)) * 100))
+        stops_token = _hash_stops(stops_for_legend)
+        filename = f"book_{book_id}_{filename_prefix}_rs{safe_token}_st{stops_token}.png"
         output_path = MAP_OUTPUT_DIR / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
         final_img = composed.resize((width, height), resample=Image.LANCZOS)
@@ -785,7 +963,9 @@ def _render_route_image(
 
         rel_path = str(output_path.relative_to(DATA_DIR))
         abs_path = str(output_path.resolve())
-        print(f"[MAP] Rendered map for book {book_id} to {rel_path}")
+        print(
+            f"[MAP] Rendered map for book {book_id} to {rel_path} (safe_frac={right_safe_frac} stops_token={stops_token})"
+        )
         if os.getenv("PHOTOBOOK_DEBUG_ARTIFACTS", "0") == "1" and tiles_layout:
             debug_payload = {
                 "bbox": bbox,
@@ -962,12 +1142,49 @@ def _normalize_bbox_aspect(
     return min_lat, max_lat, min_lon, max_lon
 
 
+def _expand_bbox_to_aspect(bbox: dict[str, float], target_aspect: float) -> dict[str, float]:
+    """Return a new bbox expanded symmetrically to match target aspect (width/height)."""
+    min_lat = bbox["min_lat"]
+    max_lat = bbox["max_lat"]
+    min_lon = bbox["min_lon"]
+    max_lon = bbox["max_lon"]
+    lat_center = (min_lat + max_lat) / 2.0
+    lon_center = (min_lon + max_lon) / 2.0
+    lat_span = max(max_lat - min_lat, 1e-6)
+    lon_span = max(max_lon - min_lon, 1e-6)
+    lon_span_vis = lon_span * math.cos(math.radians(lat_center))
+    current_aspect = lon_span_vis / lat_span
+
+    if current_aspect < target_aspect:
+        required_lon_span_vis = target_aspect * lat_span
+        required_lon_span = required_lon_span_vis / max(math.cos(math.radians(lat_center)), 1e-6)
+        lon_span = required_lon_span
+    elif current_aspect > target_aspect:
+        required_lat_span = lon_span_vis / max(target_aspect, 1e-6)
+        lat_span = required_lat_span
+
+    min_lat_new = lat_center - lat_span / 2.0
+    max_lat_new = lat_center + lat_span / 2.0
+    min_lon_new = lon_center - lon_span / 2.0
+    max_lon_new = lon_center + lon_span / 2.0
+
+    return {
+        "min_lat": min_lat_new,
+        "max_lat": max_lat_new,
+        "min_lon": min_lon_new,
+        "max_lon": max_lon_new,
+        "span_lat": lat_span,
+        "span_lon": lon_span,
+    }
+
+
 def _map_points_to_canvas(
     points: List[Tuple[float, float]],
     width: int,
     height: int,
     margin_px: int = 80,
     shrink_factor: float = 0.96,
+    right_safe_frac: float = 0.0,
     bbox: Optional[dict] = None,
 ) -> List[Tuple[float, float]]:
     """Project lat/lon to canvas using local equirectangular projection and fixed margins."""
@@ -1010,18 +1227,25 @@ def _map_points_to_canvas(
         cx_data = (min_x + max_x) / 2.0
         cy_data = (min_y + max_y) / 2.0
 
-    cx_canvas = width / 2.0
+    safe_right_frac = max(0.0, min(0.9, right_safe_frac))
+    usable_width = width * (1.0 - safe_right_frac)
+    cx_canvas = usable_width / 2.0
     cy_canvas = height / 2.0
 
     eps = 1e-9
     if data_width < eps and data_height < eps:
         return [(cx_canvas, cy_canvas) for _ in points]
 
-    inner_width = max(width - 2 * margin_px, eps)
+    inner_width = max(usable_width - 2 * margin_px, eps)
     inner_height = max(height - 2 * margin_px, eps)
     scale_x = inner_width / max(data_width, eps)
     scale_y = inner_height / max(data_height, eps)
     scale = min(scale_x, scale_y) * shrink_factor
+
+    if DEBUG_MAP_RENDERING:
+        print(
+            f"[MAP] safe_right_frac={safe_right_frac:.3f} usable_width={usable_width:.1f}/{width} inner_width={inner_width:.1f}"
+        )
 
     mapped: List[Tuple[float, float]] = []
     for dx, dy in locals_xy:

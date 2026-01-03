@@ -1,4 +1,5 @@
 import pytest
+import math
 
 import services.map_route_renderer as m
 
@@ -23,6 +24,9 @@ def test_day_map_reuses_canonical_points_and_viewport(monkeypatch):
         height,
         filename_prefix="route",
         markers=None,
+        stops_for_legend=None,
+        stops_drawn_out=None,
+        right_safe_frac=0.0,
         preprocessed=False,
         bbox_override=None,
         start_end_override=None,
@@ -36,6 +40,8 @@ def test_day_map_reuses_canonical_points_and_viewport(monkeypatch):
                 "markers": markers,
                 "start_end_override": start_end_override,
                 "filename_prefix": filename_prefix,
+                "stops_drawn_out": stops_drawn_out,
+                "right_safe_frac": right_safe_frac,
             }
         )
         return "", ""
@@ -67,6 +73,51 @@ def test_day_map_reuses_canonical_points_and_viewport(monkeypatch):
     assert day_call["start_end_override"] is not None
     start_idx, end_idx = day_call["start_end_override"]
     assert 0 <= start_idx <= end_idx < len(canonical_points)
+
+
+def test_right_safe_area_shrinks_route_extent():
+    raw_points = [
+        (0.0, 0.0),
+        (0.0, 1.0),
+        (1.0, 1.0),
+    ]
+    width, height = 1000, 500
+    margin = 80
+    # Without safe area
+    coords_default = m._map_points_to_canvas(raw_points, width, height, margin_px=margin, shrink_factor=1.0)
+    xs_default = [x for x, _ in coords_default]
+    max_default = max(xs_default)
+
+    # With 40% right safe area
+    coords_safe = m._map_points_to_canvas(raw_points, width, height, margin_px=margin, shrink_factor=1.0, right_safe_frac=0.4)
+    xs_safe = [x for x, _ in coords_safe]
+    max_safe = max(xs_safe)
+
+    # Max X should be materially left of the full width minus margin when safe area applied
+    assert max_safe < max_default
+    assert max_safe <= (width * (1 - 0.4)) - margin + 1e-6
+
+
+def test_stop_badge_constants_are_enlarged():
+    assert m.STOP_BADGE_RADIUS >= 14
+    assert m.STOP_BADGE_FONT_SIZE >= 18
+    assert m.STOP_BADGE_OUTLINE_WIDTH >= 0
+
+
+def test_bbox_expansion_matches_drawable_aspect():
+    pts = [(37.0, -122.0), (37.5, -122.5), (37.2, -122.2)]
+    width, height = 1600, 1000
+    margin = 80
+    safe = 0.35
+    drawable_w = (width - 2 * margin) * (1 - safe)
+    drawable_h = height - 2 * margin
+    target_aspect = drawable_w / drawable_h
+    bbox = m._compute_bbox(pts)
+    expanded = m._expand_bbox_to_aspect(bbox, target_aspect)
+    lat_center = (expanded["min_lat"] + expanded["max_lat"]) / 2.0
+    cos_lat = math.cos(math.radians(lat_center))
+    aspect_expanded = (expanded["span_lon"] * cos_lat) / expanded["span_lat"]
+    assert abs(aspect_expanded - target_aspect) / target_aspect < 0.05
 
 
 def test_tile_layout_mapping_is_consistent_with_bbox():
@@ -137,3 +188,65 @@ def test_tiles_and_route_use_same_layout(monkeypatch, tmp_path):
     mapped_layout = maps_seen[0]
     draw_layout = layouts_seen[-1][1]
     assert mapped_layout is draw_layout is fake_layout
+
+
+def test_trip_route_map_renders_with_stops(monkeypatch, tmp_path):
+    tmp_data = tmp_path / "data"
+    tmp_maps = tmp_data / "maps"
+    tmp_maps.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(m, "DATA_DIR", tmp_data)
+    monkeypatch.setattr(m, "MAP_OUTPUT_DIR", tmp_maps)
+    monkeypatch.setattr(m, "DEBUG_MAP_RENDERING", False)
+
+    raw_points = [(0.0, 0.0), (0.1, 0.1)]
+    stops = [
+        {"label": "Alpha", "lat": 0.0, "lon": 0.0, "photo_count": 3, "day_index": 1},
+        {"label": "Beta", "lat": 0.1, "lon": 0.1, "photo_count": 2, "day_index": 2},
+    ]
+
+    rel_path, abs_path = m.render_trip_route_map(
+        "book-stops",
+        raw_points,
+        stops_for_legend=stops,
+    )
+
+    assert rel_path
+    assert abs_path
+    assert (tmp_data / rel_path).exists()
+
+
+def test_stop_markers_use_day_colors(monkeypatch, tmp_path):
+    tmp_data = tmp_path / "data"
+    tmp_maps = tmp_data / "maps"
+    tmp_maps.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(m, "DATA_DIR", tmp_data)
+    monkeypatch.setattr(m, "MAP_OUTPUT_DIR", tmp_maps)
+    monkeypatch.setattr(m, "DEBUG_MAP_RENDERING", False)
+
+    raw_points = [(0.0, 0.0), (0.1, 0.1)]
+    stops = [
+        {"label": "One", "lat": 0.0, "lon": 0.0, "photo_count": 1, "day_index": 1},
+        {"label": "Two", "lat": 0.1, "lon": 0.1, "photo_count": 1, "day_index": 2},
+    ]
+
+    fills = []
+
+    orig_ellipse = m.ImageDraw.ImageDraw.ellipse
+
+    def recording_ellipse(self, xy, fill=None, outline=None, width=0):
+        fills.append(fill)
+        return orig_ellipse(self, xy, fill=fill, outline=outline, width=width)
+
+    monkeypatch.setattr(m.ImageDraw.ImageDraw, "ellipse", recording_ellipse, raising=False)
+
+    m.render_trip_route_map(
+        "book-stop-colors",
+        raw_points,
+        stops_for_legend=stops,
+    )
+
+    # Expect at least two distinct RGBA fills coming from stop badges (palette)
+    unique_fills = {f for f in fills if isinstance(f, tuple)}
+    assert len(unique_fills) >= 2

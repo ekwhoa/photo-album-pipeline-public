@@ -75,6 +75,8 @@ def test_trip_summary_highlights_and_map_legend_render_html(tmp_path):
     )
     assert "trip-highlights" in html
     assert "Stop 1" in html and "Stop 2" in html
+    assert html.count('class="map-legend-badge"') >= 2
+    assert ">1</span>" in html and ">2</span>" in html
     # should render highlight images
     assert html.count("trip-highlight-thumb") >= 2
     assert "landscape_thumb.jpg" in html and "portrait_thumb.jpg" in html

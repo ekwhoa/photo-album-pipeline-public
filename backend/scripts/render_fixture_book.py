@@ -282,10 +282,11 @@ def main():
 
     # Trip route PNG
     maps_dir = ROOT / "data" / "maps"
-    trip_map = maps_dir / f"book_{book.id}_route.png"
-    if not trip_map.exists():
-        LOG.error("Expected trip route image %s not found", trip_map)
+    trip_maps = sorted(maps_dir.glob(f"book_{book.id}_route*.png"))
+    if not trip_maps:
+        LOG.error("Expected trip route image for book %s not found in %s", book.id, maps_dir)
         sys.exit(4)
+    trip_map = trip_maps[-1]
     trip_bytes = trip_map.stat().st_size
     if trip_bytes <= MIN_PNG_BYTES:
         LOG.error("Trip route PNG too small: %s (%d bytes)", trip_map, trip_bytes)
@@ -293,7 +294,7 @@ def main():
     ok_checks.append((str(trip_map), trip_bytes))
 
     # At least one day route PNG
-    day_maps = sorted(maps_dir.glob(f"book_{book.id}_day_*_route.png"))
+    day_maps = sorted(maps_dir.glob(f"book_{book.id}_day_*_route*.png"))
     if not day_maps:
         LOG.error("No day route images found in %s", maps_dir)
         sys.exit(6)
